@@ -1,0 +1,13 @@
+[project]
+name = "skquad-llm-gateway"
+version = "0.1.0"
+description = "skquad central LLM gateway (LiteLLM proxy): metering, cost, BYOM, permissions"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm[proxy]>=1.40",
+    "psycopg[binary]>=3.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

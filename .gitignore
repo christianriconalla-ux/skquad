@@ -1,0 +1,34 @@
+# Node
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Go
+bin/
+*.test
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# K8s / local
+kubeconfig
+*.local.yaml
+
+# Secrets
+secrets/
+*.pem
+*.key

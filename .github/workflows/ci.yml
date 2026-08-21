@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: List docs
+        run: ls -R docs
+
+  # TODO(phase-3): add lint + test jobs per component:
+  #   control-plane (go vet, go test)
+  #   operator (go vet, go test, envtest)
+  #   agent-runtime (ruff, pytest)
+  #   llm-gateway (ruff, pytest)
+  #   web (tsc, next lint, next build)

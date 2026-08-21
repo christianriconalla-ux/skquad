@@ -1,0 +1,11 @@
+# LiteLLM proxy configuration for the skquad LLM gateway.
+#
+# The gateway is the single, model-agnostic endpoint all agent LLM calls flow
+# through. It meters tokens, computes cost, enforces agent permissions, and
+# routes BYOM calls. See docs/llm-gateway.md.
+#
+# TODO(phase-3): populate model_list from the resource registry and configure
+# the Postgres success_callback for metering.
+model_list: []
+litellm_settings:
+  success_callback: []   # e.g. ["postgres"] once metering is wired
