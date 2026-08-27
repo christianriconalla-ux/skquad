@@ -231,6 +231,31 @@ CREATE INDEX IF NOT EXISTS idx_audit_squad ON audit_log(squad_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id, timestamp);
 
 -- ---------------------------------------------------------------------------
+-- Kubernetes outbox (durable control-plane -> operator CR intents)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS kubernetes_outbox (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    aggregate_type text NOT NULL CHECK (aggregate_type IN ('squad','agent')),
+    aggregate_id   uuid NOT NULL,
+    operation      text NOT NULL CHECK (operation IN
+                    ('upsert_squad','delete_squad','upsert_agent','delete_agent')),
+    payload        jsonb NOT NULL DEFAULT '{}',
+    status         text NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','applied','failed')),
+    attempts       integer NOT NULL DEFAULT 0,
+    last_error     text NOT NULL DEFAULT '',
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
+    locked_until   timestamptz,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_kubernetes_outbox_ready
+    ON kubernetes_outbox(status, next_attempt_at, created_at)
+    WHERE status IN ('pending','failed');
+CREATE INDEX IF NOT EXISTS idx_kubernetes_outbox_aggregate
+    ON kubernetes_outbox(aggregate_type, aggregate_id, created_at);
+
+-- ---------------------------------------------------------------------------
 -- Agent long-term memory (semantic memory via pgvector)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS agent_memory (

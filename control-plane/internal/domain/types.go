@@ -91,6 +91,51 @@ type AgentIdentity struct {
 	RotatedAt      time.Time `json:"rotated_at,omitempty"`
 }
 
+// KubernetesOutboxStatus is the delivery state for a durable Kubernetes write.
+type KubernetesOutboxStatus string
+
+const (
+	KubernetesOutboxPending KubernetesOutboxStatus = "pending"
+	KubernetesOutboxApplied KubernetesOutboxStatus = "applied"
+	KubernetesOutboxFailed  KubernetesOutboxStatus = "failed"
+)
+
+// KubernetesOutboxEvent is a durable, retryable intent to mirror domain state
+// into Kubernetes after the database mutation has committed.
+type KubernetesOutboxEvent struct {
+	ID            string                 `json:"id"`
+	AggregateType string                 `json:"aggregate_type"`
+	AggregateID   string                 `json:"aggregate_id"`
+	Operation     string                 `json:"operation"`
+	Payload       json.RawMessage        `json:"payload"`
+	Status        KubernetesOutboxStatus `json:"status"`
+	Attempts      int                    `json:"attempts"`
+	LastError     string                 `json:"last_error,omitempty"`
+	NextAttemptAt time.Time              `json:"next_attempt_at"`
+	LockedUntil   time.Time              `json:"locked_until,omitempty"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
+}
+
+// Kubernetes outbox aggregate and operation names.
+const (
+	KubernetesAggregateSquad = "squad"
+	KubernetesAggregateAgent = "agent"
+
+	KubernetesOpUpsertSquad = "upsert_squad"
+	KubernetesOpDeleteSquad = "delete_squad"
+	KubernetesOpUpsertAgent = "upsert_agent"
+	KubernetesOpDeleteAgent = "delete_agent"
+)
+
+// KubernetesOutboxPayload carries enough non-secret state for the worker to
+// perform idempotent Squad/Agent CR writes and deletes.
+type KubernetesOutboxPayload struct {
+	Squad    *Squad         `json:"squad,omitempty"`
+	Agent    *Agent         `json:"agent,omitempty"`
+	Identity *AgentIdentity `json:"identity,omitempty"`
+}
+
 // TaskStatus is a Kanban column.
 type TaskStatus string
 

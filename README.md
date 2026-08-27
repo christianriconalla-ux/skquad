@@ -49,7 +49,7 @@ collaborate on tasks via a **Kanban board**. It is **Bring-Your-Own-Model
 
 ```
 Web App → API Server (OIDC, RBAC) → Postgres
-                │  creates Squad/Agent CRs
+                │  enqueues Kubernetes outbox intents
                 ▼
              Operator ──► squad namespaces (agent pods, scale-to-zero)
 Agent pods ──► LLM Gateway (LiteLLM proxy: metering, cost, BYOM, perms)
@@ -61,9 +61,10 @@ Current implementation status: the control-plane API, operator, Helm chart, and
 Python agent runtime have working vertical slices for squad/agent/task
 lifecycle, generated runtime credentials, task wake-up/scale-down, messaging
 inbox APIs, runtime inbox draining, granted resource discovery, dynamic runtime
-plugins, and task-scoped context with bounded recent memory. The LLM gateway
-and web app are still early placeholders, and semantic vector memory search
-remains a planned follow-up.
+plugins, task-scoped context with bounded recent memory, operator deletion
+finalizers, and a durable Kubernetes outbox for Squad/Agent CR convergence. The
+LLM gateway and web app are still early placeholders, and semantic vector memory
+search remains a planned follow-up.
 
 ---
 

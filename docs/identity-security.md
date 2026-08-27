@@ -168,9 +168,11 @@ audit_log(
 Current implementation note: when Kubernetes CR writing is enabled, the control
 plane writes the generated agent credential and LLM gateway virtual key into
 separate Kubernetes Secrets named by `credential_ref` and `virtual_key_ref`.
-The Agent CR exposes the Secret names, and the operator mounts both Secrets into
-the agent pod. This requires the API server service account to have Secret
-write/delete access for squad namespaces.
+The Agent CR update that exposes those Secret names is delivered through the
+Kubernetes outbox, and the operator mounts both Secrets into the agent pod once
+the CR converges. This requires the API server service account to have Secret
+write/delete access for squad namespaces. Raw token material is not written to
+the outbox.
 
 ---
 

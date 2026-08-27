@@ -300,7 +300,36 @@ CREATE INDEX idx_metering_squad_time ON metering(squad_id, timestamp);
 
 ---
 
-## 9. Agent Long-Term Memory (pgvector)
+## 9. Kubernetes Outbox
+
+```sql
+CREATE TABLE kubernetes_outbox (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    aggregate_type  text NOT NULL,  -- squad | agent
+    aggregate_id    uuid NOT NULL,
+    operation       text NOT NULL,  -- upsert/delete squad/agent
+    payload         jsonb NOT NULL DEFAULT '{}',
+    status          text NOT NULL DEFAULT 'pending',
+    attempts        integer NOT NULL DEFAULT 0,
+    last_error      text NOT NULL DEFAULT '',
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
+    locked_until    timestamptz,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now()
+);
+```
+
+- Squad and Agent mutations enqueue Kubernetes CR intents with the domain change
+  so Postgres and the Kubernetes mirror request cannot diverge silently.
+- Delete events include enough non-secret payload to delete CRs after the domain
+  row is gone.
+- Workers lease rows with `FOR UPDATE SKIP LOCKED`, apply idempotent Kubernetes
+  writes/deletes, and record applied or failed state with retry scheduling.
+- Raw credential and virtual-key token values are not stored in the outbox.
+
+---
+
+## 10. Agent Long-Term Memory (pgvector)
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -334,7 +363,7 @@ and artifact storage are still follow-up implementation slices.
 
 ---
 
-## 10. Relationships (summary)
+## 11. Relationships (summary)
 
 ```
 users 1—* squads (owner)
@@ -348,6 +377,7 @@ squads 1—* access_grants
 kanban_boards 1—* tasks
 tasks *—1 agents (assignee)
 agents 1—* messages (inbox)
+{squads,agents} 1—* kubernetes_outbox
 agents 1—* agent_memory
 agents 1—* metering
 squads 1—* metering
@@ -355,20 +385,23 @@ squads 1—* metering
 
 ---
 
-## 11. Partitioning & Retention
+## 12. Partitioning & Retention
 
 | Table | Strategy |
 |-------|----------|
 | `metering` | Range-partition by `timestamp` (monthly). Retain raw N months; aggregate + drop older. |
 | `audit_log` | Range-partition by `timestamp` (monthly). Retain longer (compliance). |
 | `messages` | Prune `delivered`/`expired`/`dead` older than a retention window. |
+| `kubernetes_outbox` | Retain failed rows until resolved; prune applied rows after an operational window. |
 | `agent_memory` | Retain per agent; optional pruning of low-value rows (later). |
 
 ---
 
-## 12. Security Notes
+## 13. Security Notes
 
 - **No raw secrets** in this schema — only `*_ref` (K8s secret references).
+- **Kubernetes outbox payloads** include only non-secret CR state and Secret
+  references, never raw runtime credentials or gateway keys.
 - **Least-privilege DB roles** — the API server, gateway, and operator each get
   a role scoped to the tables they need.
 - **Row-level isolation** — squad-scoped queries always filter by `squad_id`
@@ -377,7 +410,7 @@ squads 1—* metering
 
 ---
 
-## 13. Open Points
+## 14. Open Points
 
 - **Embedding dimension** — set to match the chosen embedding model (1536 for
   OpenAI `text-embedding-3-small`; adjust as needed).

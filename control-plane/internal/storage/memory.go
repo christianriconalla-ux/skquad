@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strings"
 	"sync"
@@ -35,6 +36,7 @@ type MemoryStore struct {
 	tasks         map[string]*domain.Task
 	agentMemory   map[string]*domain.AgentMemory
 	messages      map[string]*domain.Message
+	k8sOutbox     map[string]*domain.KubernetesOutboxEvent
 }
 
 // NewMemoryStore creates an empty development store.
@@ -57,7 +59,40 @@ func NewMemoryStore() *MemoryStore {
 		tasks:         map[string]*domain.Task{},
 		agentMemory:   map[string]*domain.AgentMemory{},
 		messages:      map[string]*domain.Message{},
+		k8sOutbox:     map[string]*domain.KubernetesOutboxEvent{},
 	}
+}
+
+func (m *MemoryStore) enqueueKubernetesOutboxLocked(aggregateType, aggregateID, operation string, payload domain.KubernetesOutboxPayload) {
+	raw, _ := json.Marshal(payload)
+	now := time.Now().UTC()
+	event := &domain.KubernetesOutboxEvent{
+		ID:            uuid.NewString(),
+		AggregateType: aggregateType,
+		AggregateID:   aggregateID,
+		Operation:     operation,
+		Payload:       raw,
+		Status:        domain.KubernetesOutboxPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	m.k8sOutbox[event.ID] = event
+}
+
+func (m *MemoryStore) enqueueSquadOutboxLocked(operation string, squad *domain.Squad) {
+	m.enqueueKubernetesOutboxLocked(domain.KubernetesAggregateSquad, squad.ID, operation, domain.KubernetesOutboxPayload{Squad: cloneSquad(squad)})
+}
+
+func (m *MemoryStore) enqueueAgentOutboxLocked(operation string, agent *domain.Agent) {
+	var identity *domain.AgentIdentity
+	if identityID, ok := m.identityAgent[agent.ID]; ok {
+		identity = cloneAgentIdentity(m.identities[identityID])
+	}
+	m.enqueueKubernetesOutboxLocked(domain.KubernetesAggregateAgent, agent.ID, operation, domain.KubernetesOutboxPayload{
+		Agent:    cloneAgent(agent),
+		Identity: identity,
+	})
 }
 
 func (m *MemoryStore) GetUser(_ context.Context, id string) (*domain.User, error) {
@@ -156,6 +191,7 @@ func (m *MemoryStore) CreateSquad(_ context.Context, s *domain.Squad) (*domain.S
 	board := &domain.Board{ID: uuid.NewString(), SquadID: created.ID, CreatedAt: now}
 	m.boards[board.ID] = board
 	m.boardsBySquad[created.ID] = board.ID
+	m.enqueueSquadOutboxLocked(domain.KubernetesOpUpsertSquad, created)
 	return cloneSquad(created), nil
 }
 
@@ -198,15 +234,18 @@ func (m *MemoryStore) UpdateSquad(_ context.Context, s *domain.Squad) (*domain.S
 	updated.CreatedAt = existing.CreatedAt
 	updated.UpdatedAt = time.Now().UTC()
 	m.squads[s.ID] = updated
+	m.enqueueSquadOutboxLocked(domain.KubernetesOpUpsertSquad, updated)
 	return cloneSquad(updated), nil
 }
 
 func (m *MemoryStore) DeleteSquad(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.squads[id]; !ok {
+	squad, ok := m.squads[id]
+	if !ok {
 		return ErrNotFound
 	}
+	m.enqueueSquadOutboxLocked(domain.KubernetesOpDeleteSquad, squad)
 	delete(m.squads, id)
 	if boardID, ok := m.boardsBySquad[id]; ok {
 		delete(m.boards, boardID)
@@ -265,6 +304,7 @@ func (m *MemoryStore) CreateAgent(_ context.Context, a *domain.Agent) (*domain.A
 	created.CreatedAt = now
 	created.UpdatedAt = now
 	m.agents[created.ID] = created
+	m.enqueueAgentOutboxLocked(domain.KubernetesOpUpsertAgent, created)
 	return cloneAgent(created), nil
 }
 
@@ -295,15 +335,18 @@ func (m *MemoryStore) UpdateAgent(_ context.Context, a *domain.Agent) (*domain.A
 	updated.CreatedAt = existing.CreatedAt
 	updated.UpdatedAt = time.Now().UTC()
 	m.agents[a.ID] = updated
+	m.enqueueAgentOutboxLocked(domain.KubernetesOpUpsertAgent, updated)
 	return cloneAgent(updated), nil
 }
 
 func (m *MemoryStore) DeleteAgent(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.agents[id]; !ok {
+	agent, ok := m.agents[id]
+	if !ok {
 		return ErrNotFound
 	}
+	m.enqueueAgentOutboxLocked(domain.KubernetesOpDeleteAgent, agent)
 	delete(m.agents, id)
 	for _, task := range m.tasks {
 		if task.AssigneeAgentID == id {
@@ -338,6 +381,7 @@ func (m *MemoryStore) SetAgentStatus(_ context.Context, id string, status domain
 	}
 	a.Status = status
 	a.UpdatedAt = time.Now().UTC()
+	m.enqueueAgentOutboxLocked(domain.KubernetesOpUpsertAgent, a)
 	return nil
 }
 
@@ -358,6 +402,7 @@ func (m *MemoryStore) CreateAgentIdentity(_ context.Context, i *domain.AgentIden
 	m.identityAgent[created.AgentID] = created.ID
 	agent.IdentityID = created.ID
 	agent.UpdatedAt = created.CreatedAt
+	m.enqueueAgentOutboxLocked(domain.KubernetesOpUpsertAgent, agent)
 	return cloneAgentIdentity(created), nil
 }
 
@@ -383,6 +428,7 @@ func (m *MemoryStore) RotateAgentIdentity(_ context.Context, agentID string, cre
 	identity.CredentialHash = credentialHash
 	identity.VirtualKeyRef = virtualKeyRef
 	identity.RotatedAt = time.Now().UTC()
+	m.enqueueAgentOutboxLocked(domain.KubernetesOpUpsertAgent, m.agents[agentID])
 	return cloneAgentIdentity(identity), nil
 }
 
@@ -976,6 +1022,88 @@ func (m *MemoryStore) ListAgentMemory(_ context.Context, agentID string, squadID
 	return out, nil
 }
 
+func (m *MemoryStore) LeaseKubernetesOutbox(_ context.Context, limit int, leaseFor time.Duration) ([]*domain.KubernetesOutboxEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 10
+	}
+	now := time.Now().UTC()
+	events := make([]*domain.KubernetesOutboxEvent, 0, len(m.k8sOutbox))
+	for _, event := range m.k8sOutbox {
+		if event.Status != domain.KubernetesOutboxPending && event.Status != domain.KubernetesOutboxFailed {
+			continue
+		}
+		if event.NextAttemptAt.After(now) || (!event.LockedUntil.IsZero() && event.LockedUntil.After(now)) {
+			continue
+		}
+		events = append(events, event)
+	}
+	slices.SortFunc(events, func(a, b *domain.KubernetesOutboxEvent) int {
+		return a.CreatedAt.Compare(b.CreatedAt)
+	})
+	if len(events) > limit {
+		events = events[:limit]
+	}
+	out := make([]*domain.KubernetesOutboxEvent, 0, len(events))
+	for _, event := range events {
+		event.LockedUntil = now.Add(leaseFor)
+		event.UpdatedAt = now
+		out = append(out, cloneKubernetesOutboxEvent(event))
+	}
+	return out, nil
+}
+
+func (m *MemoryStore) MarkKubernetesOutboxApplied(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	event, ok := m.k8sOutbox[id]
+	if !ok {
+		return ErrNotFound
+	}
+	event.Status = domain.KubernetesOutboxApplied
+	event.LockedUntil = time.Time{}
+	event.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (m *MemoryStore) MarkKubernetesOutboxFailed(_ context.Context, id string, lastError string, retryAfter time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	event, ok := m.k8sOutbox[id]
+	if !ok {
+		return ErrNotFound
+	}
+	event.Status = domain.KubernetesOutboxFailed
+	event.Attempts++
+	event.LastError = lastError
+	event.NextAttemptAt = time.Now().UTC().Add(retryAfter)
+	event.LockedUntil = time.Time{}
+	event.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (m *MemoryStore) ListKubernetesOutbox(_ context.Context, status domain.KubernetesOutboxStatus, limit int) ([]*domain.KubernetesOutboxEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	out := []*domain.KubernetesOutboxEvent{}
+	for _, event := range m.k8sOutbox {
+		if status == "" || event.Status == status {
+			out = append(out, cloneKubernetesOutboxEvent(event))
+		}
+	}
+	slices.SortFunc(out, func(a, b *domain.KubernetesOutboxEvent) int {
+		return a.CreatedAt.Compare(b.CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (m *MemoryStore) CreateMessage(_ context.Context, msg *domain.Message) (*domain.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1099,6 +1227,15 @@ func cloneAgentIdentity(i *domain.AgentIdentity) *domain.AgentIdentity {
 		return nil
 	}
 	v := *i
+	return &v
+}
+
+func cloneKubernetesOutboxEvent(event *domain.KubernetesOutboxEvent) *domain.KubernetesOutboxEvent {
+	if event == nil {
+		return nil
+	}
+	v := *event
+	v.Payload = slices.Clone(event.Payload)
 	return &v
 }
 

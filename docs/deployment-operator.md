@@ -119,11 +119,15 @@ When the operator sees a `Squad` CR:
    in `skquad-system` cannot own a cluster-scoped Namespace through Kubernetes
    garbage collection.
 
-Current consistency note: operator finalizers now prevent orphaned
-cross-namespace resources during CR deletion. The API still writes CRs
-synchronously from request handlers; a transactional Kubernetes outbox remains
-required so Postgres commits and Kubernetes writes cannot diverge during create,
-update, delete, or rollout failures.
+Current consistency note: operator finalizers prevent orphaned cross-namespace
+resources during CR deletion. Squad and Agent create/update/delete/status
+mutations now enqueue durable Kubernetes outbox events in the same store
+mutation that changes Postgres state; a control-plane worker leases those events
+and applies the CR writes asynchronously. HTTP mutation responses therefore
+mean "the domain mutation and Kubernetes intent were accepted", not "the
+operator has already converged". Generated credential and virtual-key Secret
+writes are still synchronous because raw token material is not stored in
+Postgres.
 
 ---
 
@@ -217,7 +221,8 @@ charts/skquad/
 
 - **One chart** installs the whole control plane + operator.
 - **Squad/agent resources** are created via the **API** (not by hand) — the API
-  creates the CRs, the operator reconciles them.
+  commits domain state plus Kubernetes outbox intents, then the outbox worker
+  writes CRs for the operator to reconcile.
 - **Values** configure images, replicas, resources, Postgres, idle timeout,
   runtime task/inbox polling defaults, ingress, observability toggle, etc.
 - **Secrets** default to chart-managed dev values, but production installs can
@@ -229,7 +234,7 @@ charts/skquad/
 
 | Component | Workload | Notes |
 |-----------|----------|-------|
-| **API Server** | Deployment (≥2) | Stateless; talks to Postgres; creates CRs. |
+| **API Server** | Deployment (≥2) | Stateless; talks to Postgres; leases/writes Kubernetes outbox events. |
 | **Web App** | Deployment (≥1) | Serves the SPA; can be same as API server or separate. |
 | **LLM Gateway** | Deployment (≥2) | Stateless; LiteLLM proxy; talks to Postgres + providers. |
 | **Operator** | Deployment (1, leader-elected) | Needs cluster-wide RBAC (namespaces, deployments, secrets). |

@@ -66,6 +66,10 @@ func main() {
 			os.Exit(1)
 		}
 		crWriter = writer
+		if outboxStore, ok := store.(storage.KubernetesOutboxStore); ok {
+			go kube.RunOutboxWorker(context.Background(), outboxStore, writer)
+			slog.Info("started kubernetes outbox worker")
+		}
 		slog.Info("using kubernetes CR writer", "namespace", cfg.K8sNamespace, "group_version", cfg.K8sGroupVersion)
 	}
 

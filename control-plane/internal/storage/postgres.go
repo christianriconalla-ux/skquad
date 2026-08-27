@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -72,6 +73,57 @@ func (p *PostgresStore) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (p *PostgresStore) enqueueKubernetesOutboxTx(ctx context.Context, tx pgx.Tx, aggregateType, aggregateID, operation string, payload any) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("postgres: marshal kubernetes outbox payload: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO kubernetes_outbox (aggregate_type, aggregate_id, operation, payload)
+		VALUES ($1, $2, $3, $4)
+	`, aggregateType, aggregateID, operation, raw); err != nil {
+		return mapPgErr(err)
+	}
+	return nil
+}
+
+func (p *PostgresStore) enqueueSquadOutboxTx(ctx context.Context, tx pgx.Tx, operation string, squad *domain.Squad) error {
+	return p.enqueueKubernetesOutboxTx(ctx, tx, domain.KubernetesAggregateSquad, squad.ID, operation, domain.KubernetesOutboxPayload{Squad: squad})
+}
+
+func (p *PostgresStore) enqueueAgentOutboxTx(ctx context.Context, tx pgx.Tx, operation string, agent *domain.Agent) error {
+	identity, err := getAgentIdentityTx(ctx, tx, agent.ID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if errors.Is(err, ErrNotFound) {
+		identity = nil
+	}
+	return p.enqueueKubernetesOutboxTx(ctx, tx, domain.KubernetesAggregateAgent, agent.ID, operation, domain.KubernetesOutboxPayload{
+		Agent:    agent,
+		Identity: identity,
+	})
+}
+
+func getAgentTx(ctx context.Context, tx pgx.Tx, id string) (*domain.Agent, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
+		       coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
+		FROM agents
+		WHERE id = $1
+	`, id)
+	return scanAgent(row)
+}
+
+func getAgentIdentityTx(ctx context.Context, tx pgx.Tx, agentID string) (*domain.AgentIdentity, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT id::text, agent_id::text, credential_ref, credential_hash, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
+		FROM agent_identities
+		WHERE agent_id = $1
+	`, agentID)
+	return scanAgentIdentity(row)
 }
 
 func (p *PostgresStore) GetUser(ctx context.Context, id string) (*domain.User, error) {
@@ -167,6 +219,9 @@ func (p *PostgresStore) CreateSquad(ctx context.Context, s *domain.Squad) (*doma
 	`, created.ID); err != nil {
 		return nil, mapPgErr(err)
 	}
+	if err := p.enqueueSquadOutboxTx(ctx, tx, domain.KubernetesOpUpsertSquad, created); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, mapPgErr(err)
 	}
@@ -192,7 +247,13 @@ func (p *PostgresStore) GetSquadByName(ctx context.Context, ownerID, name string
 }
 
 func (p *PostgresStore) UpdateSquad(ctx context.Context, s *domain.Squad) (*domain.Squad, error) {
-	row := p.pool.QueryRow(ctx, `
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE squads
 		SET name = $2,
 		    mission = $3,
@@ -202,18 +263,46 @@ func (p *PostgresStore) UpdateSquad(ctx context.Context, s *domain.Squad) (*doma
 		WHERE id = $1
 		RETURNING id::text, name, mission, operating_model, owner_id::text, namespace, status, created_at, updated_at
 	`, s.ID, s.Name, s.Mission, defaultJSON(s.OperatingModel, "{}"), defaultSquadStatus(s.Status))
-	return scanSquad(row)
+	updated, err := scanSquad(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.enqueueSquadOutboxTx(ctx, tx, domain.KubernetesOpUpsertSquad, updated); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return updated, nil
 }
 
 func (p *PostgresStore) DeleteSquad(ctx context.Context, id string) error {
-	tag, err := p.pool.Exec(ctx, `DELETE FROM squads WHERE id = $1`, id)
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
+		SELECT id::text, name, mission, operating_model, owner_id::text, namespace, status, created_at, updated_at
+		FROM squads
+		WHERE id = $1
+	`, id)
+	squad, err := scanSquad(row)
+	if err != nil {
+		return err
+	}
+	if err := p.enqueueSquadOutboxTx(ctx, tx, domain.KubernetesOpDeleteSquad, squad); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM squads WHERE id = $1`, id)
 	if err != nil {
 		return mapPgErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return mapPgErr(tx.Commit(ctx))
 }
 
 func (p *PostgresStore) ListSquads(ctx context.Context, ownerID string) ([]*domain.Squad, error) {
@@ -250,13 +339,29 @@ func (p *PostgresStore) ListSquads(ctx context.Context, ownerID string) ([]*doma
 }
 
 func (p *PostgresStore) CreateAgent(ctx context.Context, a *domain.Agent) (*domain.Agent, error) {
-	row := p.pool.QueryRow(ctx, `
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		INSERT INTO agents (squad_id, name, role, default_provider, default_model, permissions, idle_timeout_sec, status)
 		VALUES ($1, $2, $3, nullif($4, '')::uuid, $5, $6, $7, $8)
 		RETURNING id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
 		          coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
 	`, a.SquadID, a.Name, a.Role, a.DefaultProvider, a.DefaultModel, defaultJSON(a.Permissions, "[]"), a.IdleTimeoutSec, defaultAgentStatus(a.Status))
-	return scanAgent(row)
+	created, err := scanAgent(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.enqueueAgentOutboxTx(ctx, tx, domain.KubernetesOpUpsertAgent, created); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return created, nil
 }
 
 func (p *PostgresStore) GetAgent(ctx context.Context, id string) (*domain.Agent, error) {
@@ -270,7 +375,13 @@ func (p *PostgresStore) GetAgent(ctx context.Context, id string) (*domain.Agent,
 }
 
 func (p *PostgresStore) UpdateAgent(ctx context.Context, a *domain.Agent) (*domain.Agent, error) {
-	row := p.pool.QueryRow(ctx, `
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE agents
 		SET name = $2,
 		    role = $3,
@@ -284,18 +395,47 @@ func (p *PostgresStore) UpdateAgent(ctx context.Context, a *domain.Agent) (*doma
 		RETURNING id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
 		          coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
 	`, a.ID, a.Name, a.Role, a.DefaultProvider, a.DefaultModel, defaultJSON(a.Permissions, "[]"), a.IdleTimeoutSec, defaultAgentStatus(a.Status))
-	return scanAgent(row)
+	updated, err := scanAgent(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.enqueueAgentOutboxTx(ctx, tx, domain.KubernetesOpUpsertAgent, updated); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return updated, nil
 }
 
 func (p *PostgresStore) DeleteAgent(ctx context.Context, id string) error {
-	tag, err := p.pool.Exec(ctx, `DELETE FROM agents WHERE id = $1`, id)
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
+		SELECT id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
+		       coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
+		FROM agents
+		WHERE id = $1
+	`, id)
+	agent, err := scanAgent(row)
+	if err != nil {
+		return err
+	}
+	if err := p.enqueueAgentOutboxTx(ctx, tx, domain.KubernetesOpDeleteAgent, agent); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM agents WHERE id = $1`, id)
 	if err != nil {
 		return mapPgErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return mapPgErr(tx.Commit(ctx))
 }
 
 func (p *PostgresStore) ListAgents(ctx context.Context, squadID string) ([]*domain.Agent, error) {
@@ -323,18 +463,27 @@ func (p *PostgresStore) ListAgents(ctx context.Context, squadID string) ([]*doma
 }
 
 func (p *PostgresStore) SetAgentStatus(ctx context.Context, id string, status domain.AgentStatus) error {
-	tag, err := p.pool.Exec(ctx, `
-		UPDATE agents
-		SET status = $2, updated_at = now()
-		WHERE id = $1
-	`, id, status)
+	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return mapPgErr(err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
+		UPDATE agents
+		SET status = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
+		          coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
+	`, id, status)
+	agent, err := scanAgent(row)
+	if err != nil {
+		return err
 	}
-	return nil
+	if err := p.enqueueAgentOutboxTx(ctx, tx, domain.KubernetesOpUpsertAgent, agent); err != nil {
+		return err
+	}
+	return mapPgErr(tx.Commit(ctx))
 }
 
 func (p *PostgresStore) CreateAgentIdentity(ctx context.Context, i *domain.AgentIdentity) (*domain.AgentIdentity, error) {
@@ -360,6 +509,16 @@ func (p *PostgresStore) CreateAgentIdentity(ctx context.Context, i *domain.Agent
 	`, created.AgentID, created.ID); err != nil {
 		return nil, mapPgErr(err)
 	}
+	agent, err := getAgentTx(ctx, tx, created.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.enqueueKubernetesOutboxTx(ctx, tx, domain.KubernetesAggregateAgent, agent.ID, domain.KubernetesOpUpsertAgent, domain.KubernetesOutboxPayload{
+		Agent:    agent,
+		Identity: created,
+	}); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, mapPgErr(err)
 	}
@@ -376,7 +535,13 @@ func (p *PostgresStore) GetAgentIdentity(ctx context.Context, agentID string) (*
 }
 
 func (p *PostgresStore) RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string, credentialHash string, virtualKeyRef string) (*domain.AgentIdentity, error) {
-	row := p.pool.QueryRow(ctx, `
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE agent_identities
 		SET credential_ref = $2,
 		    credential_hash = $3,
@@ -385,7 +550,24 @@ func (p *PostgresStore) RotateAgentIdentity(ctx context.Context, agentID string,
 		WHERE agent_id = $1
 		RETURNING id::text, agent_id::text, credential_ref, credential_hash, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
 	`, agentID, credentialRef, credentialHash, nullableText(virtualKeyRef))
-	return scanAgentIdentity(row)
+	identity, err := scanAgentIdentity(row)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := getAgentTx(ctx, tx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.enqueueKubernetesOutboxTx(ctx, tx, domain.KubernetesAggregateAgent, agent.ID, domain.KubernetesOpUpsertAgent, domain.KubernetesOutboxPayload{
+		Agent:    agent,
+		Identity: identity,
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return identity, nil
 }
 
 func (p *PostgresStore) CreateGrant(ctx context.Context, g *domain.AccessGrant) (*domain.AccessGrant, error) {
@@ -1020,6 +1202,91 @@ func (p *PostgresStore) ListAgentMemory(ctx context.Context, agentID string, squ
 	return memories, mapPgErr(rows.Err())
 }
 
+func (p *PostgresStore) LeaseKubernetesOutbox(ctx context.Context, limit int, leaseFor time.Duration) ([]*domain.KubernetesOutboxEvent, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := p.pool.Query(ctx, `
+		WITH leased AS (
+			SELECT id
+			FROM kubernetes_outbox
+			WHERE status IN ('pending','failed')
+			  AND next_attempt_at <= now()
+			  AND (locked_until IS NULL OR locked_until <= now())
+			ORDER BY created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		UPDATE kubernetes_outbox
+		SET locked_until = now() + $2::interval,
+		    updated_at = now()
+		WHERE id IN (SELECT id FROM leased)
+		RETURNING id::text, aggregate_type, aggregate_id::text, operation, payload, status,
+		          attempts, last_error, next_attempt_at, locked_until, created_at, updated_at
+	`, limit, fmt.Sprintf("%d seconds", int(leaseFor/time.Second)))
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+	return scanKubernetesOutboxRows(rows)
+}
+
+func (p *PostgresStore) MarkKubernetesOutboxApplied(ctx context.Context, id string) error {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE kubernetes_outbox
+		SET status = 'applied',
+		    locked_until = NULL,
+		    updated_at = now()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return mapPgErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *PostgresStore) MarkKubernetesOutboxFailed(ctx context.Context, id string, lastError string, retryAfter time.Duration) error {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE kubernetes_outbox
+		SET status = 'failed',
+		    attempts = attempts + 1,
+		    last_error = $2,
+		    next_attempt_at = now() + $3::interval,
+		    locked_until = NULL,
+		    updated_at = now()
+		WHERE id = $1
+	`, id, lastError, fmt.Sprintf("%d seconds", int(retryAfter/time.Second)))
+	if err != nil {
+		return mapPgErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *PostgresStore) ListKubernetesOutbox(ctx context.Context, status domain.KubernetesOutboxStatus, limit int) ([]*domain.KubernetesOutboxEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT id::text, aggregate_type, aggregate_id::text, operation, payload, status,
+		       attempts, last_error, next_attempt_at, locked_until, created_at, updated_at
+		FROM kubernetes_outbox
+		WHERE ($1 = '' OR status = $1)
+		ORDER BY created_at
+		LIMIT $2
+	`, status, limit)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+	return scanKubernetesOutboxRows(rows)
+}
+
 func (p *PostgresStore) CreateMessage(ctx context.Context, m *domain.Message) (*domain.Message, error) {
 	row := p.pool.QueryRow(ctx, `
 		INSERT INTO messages (
@@ -1113,6 +1380,7 @@ func scanAgent(row scanner) (*domain.Agent, error) {
 		&a.Role,
 		&a.IdentityID,
 		&a.DefaultProvider,
+		&a.DefaultModel,
 		&a.Permissions,
 		&a.IdleTimeoutSec,
 		&a.Status,
@@ -1143,6 +1411,43 @@ func scanAgentIdentity(row scanner) (*domain.AgentIdentity, error) {
 		i.RotatedAt = rotatedAt.Time
 	}
 	return &i, nil
+}
+
+func scanKubernetesOutboxRows(rows pgx.Rows) ([]*domain.KubernetesOutboxEvent, error) {
+	events := []*domain.KubernetesOutboxEvent{}
+	for rows.Next() {
+		event, err := scanKubernetesOutbox(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, mapPgErr(rows.Err())
+}
+
+func scanKubernetesOutbox(row scanner) (*domain.KubernetesOutboxEvent, error) {
+	var event domain.KubernetesOutboxEvent
+	var lockedUntil sql.NullTime
+	if err := row.Scan(
+		&event.ID,
+		&event.AggregateType,
+		&event.AggregateID,
+		&event.Operation,
+		&event.Payload,
+		&event.Status,
+		&event.Attempts,
+		&event.LastError,
+		&event.NextAttemptAt,
+		&lockedUntil,
+		&event.CreatedAt,
+		&event.UpdatedAt,
+	); err != nil {
+		return nil, mapPgErr(err)
+	}
+	if lockedUntil.Valid {
+		event.LockedUntil = lockedUntil.Time
+	}
+	return &event, nil
 }
 
 func scanBoard(row scanner) (*domain.Board, error) {

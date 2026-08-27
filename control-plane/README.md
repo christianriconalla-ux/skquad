@@ -1,8 +1,8 @@
 # skquad Control Plane (API Server)
 
 The REST API server (Go). Single entry point: OIDC authN, user RBAC, access
-grants, domain CRUD, and creation of the `Squad`/`Agent` CRs the operator
-reconciles.
+grants, domain CRUD, and durable Kubernetes outbox intents for the `Squad` and
+`Agent` CRs the operator reconciles.
 
 - Design: [`docs/api-design.md`](../docs/api-design.md)
 - Identity & RBAC: [`docs/identity-security.md`](../docs/identity-security.md)
@@ -35,8 +35,8 @@ with `SKQUAD_OIDC_ISSUER` and `SKQUAD_OIDC_AUDIENCE` to validate OIDC bearer
 JWTs and provision users from token claims.
 
 Kubernetes custom-resource writes are disabled by default. Set
-`SKQUAD_K8S_ENABLED=true` to mirror squad/agent mutations into the Kubernetes
-API for the operator. Optional settings:
+`SKQUAD_K8S_ENABLED=true` to start the outbox worker that mirrors squad/agent
+mutations into the Kubernetes API for the operator. Optional settings:
 
 - `SKQUAD_K8S_API_BASE` (default `https://kubernetes.default.svc`)
 - `SKQUAD_K8S_NAMESPACE` (default `skquad-system`)
@@ -70,8 +70,8 @@ Implemented slice:
 - Metering reads for squad, agent, and platform-admin summary views
 - Audit log reads for squad owners and platform admins
 - Best-effort audit recording for control-plane mutations
-- Optional Kubernetes `Squad`/`Agent` CR writer for squad/agent mutations,
-  including the generated squad namespace in `Squad.spec.namespace`
+- Durable Kubernetes outbox for `Squad`/`Agent` CR create/update/delete/status
+  intents, including the generated squad namespace in `Squad.spec.namespace`
 - Consistent JSON error envelopes
 - Process-local in-memory store for development and handler tests
 - Postgres-backed user/squad/agent/identity/permission/board/task/access-grant/
@@ -88,5 +88,5 @@ Implemented slice:
   into the `Agent` CR so the operator can scale an agent up or keep it warm
   while work remains
 
-Next slices are runtime inbox draining, semantic memory search, artifact
-persistence, and gateway/web implementation.
+Next slices are LiteLLM gateway provisioning, task execution leases/results,
+semantic memory search, artifact persistence, and gateway/web implementation.

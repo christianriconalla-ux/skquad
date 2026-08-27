@@ -55,7 +55,7 @@
 | `GET` | `/api/v1/squads` | List squads the caller owns / has access to. |
 | `GET` | `/api/v1/squads/:id` | Get a squad (owner or granted). |
 | `PATCH` | `/api/v1/squads/:id` | Update name / mission / operating model (owner). |
-| `DELETE` | `/api/v1/squads/:id` | Delete a squad (owner). Deletes the `Squad` CR (cascades). |
+| `DELETE` | `/api/v1/squads/:id` | Delete a squad (owner). Enqueues deletion of the `Squad` CR; operator finalizer removes managed resources. |
 | `POST` | `/api/v1/squads/:id/archive` | Archive a squad (owner). |
 
 ---
@@ -68,7 +68,7 @@
 | `GET` | `/api/v1/squads/:id/agents` | List agents in a squad. |
 | `GET` | `/api/v1/agents/:id` | Get an agent (owner or granted). |
 | `PATCH` | `/api/v1/agents/:id` | Update role / default model / idle timeout (owner). |
-| `DELETE` | `/api/v1/agents/:id` | Delete an agent (owner). Deletes the `Agent` CR. |
+| `DELETE` | `/api/v1/agents/:id` | Delete an agent (owner). Enqueues deletion of the `Agent` CR. |
 | `POST` | `/api/v1/agents/:id/identity` | **Create the agent identity** (one-click; owner). |
 | `POST` | `/api/v1/agents/:id/identity/rotate` | Rotate the agent credential / virtual key (owner). |
 | `GET` | `/api/v1/agents/:id/permissions` | List the agent's resource permissions. |

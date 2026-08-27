@@ -645,10 +645,6 @@ func (s *Server) createSquad(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.crWriter.UpsertSquad(r.Context(), created); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to write squad custom resource")
-		return
-	}
 	s.recordUserAudit(r, "squad.create", "squad", created.ID, created.ID, nil)
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -709,10 +705,6 @@ func (s *Server) updateSquad(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.crWriter.UpsertSquad(r.Context(), updated); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to write squad custom resource")
-		return
-	}
 	s.recordUserAudit(r, "squad.update", "squad", updated.ID, updated.ID, nil)
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -724,10 +716,6 @@ func (s *Server) deleteSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.DeleteSquad(r.Context(), squad.ID); err != nil {
 		writeStorageError(w, err)
-		return
-	}
-	if err := s.crWriter.DeleteSquad(r.Context(), squad); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to delete squad custom resource")
 		return
 	}
 	s.recordUserAudit(r, "squad.delete", "squad", squad.ID, squad.ID, nil)
@@ -859,10 +847,6 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.upsertAgentCR(r.Context(), created); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
-		return
-	}
 	s.recordUserAudit(r, "agent.create", "agent", created.ID, squad.ID, nil)
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -937,10 +921,6 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.upsertAgentCR(r.Context(), updated); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
-		return
-	}
 	s.recordUserAudit(r, "agent.update", "agent", updated.ID, updated.SquadID, nil)
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -952,10 +932,6 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.DeleteAgent(r.Context(), agent.ID); err != nil {
 		writeStorageError(w, err)
-		return
-	}
-	if err := s.crWriter.DeleteAgent(r.Context(), agent); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to delete agent custom resource")
 		return
 	}
 	s.recordUserAudit(r, "agent.delete", "agent", agent.ID, agent.SquadID, nil)
@@ -1007,10 +983,6 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.crWriter.UpsertAgent(r.Context(), agent, created); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
-		return
-	}
 	s.recordUserAudit(r, "agent_identity.create", "agent_identity", created.ID, agent.SquadID, nil)
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -1060,10 +1032,6 @@ func (s *Server) rotateAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.crWriter.DeleteAgentCredential(r.Context(), existing.CredentialRef)
 	_ = s.crWriter.DeleteAgentCredential(r.Context(), existing.VirtualKeyRef)
-	if err := s.crWriter.UpsertAgent(r.Context(), agent, identity); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
-		return
-	}
 	s.recordUserAudit(r, "agent_identity.rotate", "agent_identity", identity.ID, agent.SquadID, nil)
 	writeJSON(w, http.StatusOK, identity)
 }
@@ -2101,14 +2069,7 @@ func (s *Server) agentHasPendingWork(ctx context.Context, agentID string) (bool,
 }
 
 func (s *Server) setAgentStatusAndMirror(ctx context.Context, agentID string, status domain.AgentStatus) error {
-	if err := s.store.SetAgentStatus(ctx, agentID, status); err != nil {
-		return err
-	}
-	agent, err := s.store.GetAgent(ctx, agentID)
-	if err != nil {
-		return err
-	}
-	return s.upsertAgentCR(ctx, agent)
+	return s.store.SetAgentStatus(ctx, agentID, status)
 }
 
 func auditLimit(r *http.Request) int {

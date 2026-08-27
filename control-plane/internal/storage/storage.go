@@ -6,6 +6,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/rossbrigoli/skquad/control-plane/internal/domain"
 )
@@ -21,6 +22,7 @@ type Store interface {
 	UserStore
 	SquadStore
 	AgentStore
+	KubernetesOutboxStore
 	BoardStore
 	TaskStore
 	AgentMemoryStore
@@ -30,6 +32,14 @@ type Store interface {
 	GrantStore
 	MeteringStore
 	AuditStore
+}
+
+// KubernetesOutboxStore persists durable Kubernetes reconciliation intents.
+type KubernetesOutboxStore interface {
+	LeaseKubernetesOutbox(ctx context.Context, limit int, leaseFor time.Duration) ([]*domain.KubernetesOutboxEvent, error)
+	MarkKubernetesOutboxApplied(ctx context.Context, id string) error
+	MarkKubernetesOutboxFailed(ctx context.Context, id string, lastError string, retryAfter time.Duration) error
+	ListKubernetesOutbox(ctx context.Context, status domain.KubernetesOutboxStatus, limit int) ([]*domain.KubernetesOutboxEvent, error)
 }
 
 // UserStore persists human users.

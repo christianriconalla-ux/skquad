@@ -41,5 +41,5 @@ operator/
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
   and Deployment
 
-Next slices are the transactional Kubernetes outbox, dynamic plugin package
-discovery, and configurable egress policy generation from registry grants.
+Next slices are checking Deployment available replicas before reporting ready
+and configurable egress policy generation from registry grants.

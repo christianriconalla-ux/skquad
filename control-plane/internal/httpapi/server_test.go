@@ -326,8 +326,8 @@ func TestAuditAndMeteringEndpoints(t *testing.T) {
 func TestSquadAndAgentMutationsWriteCustomResources(t *testing.T) {
 	t.Parallel()
 
-	crWriter := &fakeCRWriter{}
-	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+	store := storage.NewMemoryStore()
+	handler := NewWithCRWriter(testConfig(), store, &fakeCRWriter{})
 
 	var squad domain.Squad
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
@@ -359,14 +359,16 @@ func TestSquadAndAgentMutationsWriteCustomResources(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 
+	events, err := store.ListKubernetesOutbox(context.Background(), "", 20)
+	require.NoError(t, err)
 	require.Equal(t, []string{
-		"upsert-squad:" + squad.ID,
-		"upsert-squad:" + squad.ID,
-		"upsert-agent:" + agent.ID,
-		"upsert-agent:" + agent.ID,
-		"delete-agent:" + agent.ID,
-		"delete-squad:" + squad.ID,
-	}, crWriter.ops)
+		domain.KubernetesOpUpsertSquad + ":" + squad.ID,
+		domain.KubernetesOpUpsertSquad + ":" + squad.ID,
+		domain.KubernetesOpUpsertAgent + ":" + agent.ID,
+		domain.KubernetesOpUpsertAgent + ":" + agent.ID,
+		domain.KubernetesOpDeleteAgent + ":" + agent.ID,
+		domain.KubernetesOpDeleteSquad + ":" + squad.ID,
+	}, outboxOperations(events))
 }
 
 func TestAgentIdentityCreateAndRotate(t *testing.T) {
@@ -411,12 +413,7 @@ func TestAgentIdentityCreateAndRotate(t *testing.T) {
 	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
 	require.Contains(t, auditActions(audit), "agent_identity.create")
 	require.Contains(t, auditActions(audit), "agent_identity.rotate")
-	require.Equal(t, []string{
-		"upsert-squad:" + squad.ID,
-		"upsert-agent:" + agent.ID,
-		"upsert-agent:" + agent.ID,
-		"upsert-agent:" + agent.ID,
-	}, crWriter.ops)
+	require.Empty(t, crWriter.ops)
 	require.Contains(t, crWriter.deletedCredentialRefs, identity.CredentialRef)
 	require.Contains(t, crWriter.deletedCredentialRefs, identity.VirtualKeyRef)
 }
@@ -728,8 +725,9 @@ func TestAgentRuntimeCompletionCanPersistMemory(t *testing.T) {
 func TestAssignedTaskMirrorsAgentBusyAndCompletionMirrorsIdle(t *testing.T) {
 	t.Parallel()
 
+	store := storage.NewMemoryStore()
 	crWriter := &fakeCRWriter{}
-	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+	handler := NewWithCRWriter(testConfig(), store, crWriter)
 
 	var squad domain.Squad
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
@@ -750,21 +748,26 @@ func TestAssignedTaskMirrorsAgentBusyAndCompletionMirrorsIdle(t *testing.T) {
 		"title":             "Wake agent",
 		"assignee_agent_id": agent.ID,
 	}, http.StatusCreated, &task)
-	require.Equal(t, []domain.AgentStatus{domain.AgentIdle, domain.AgentIdle, domain.AgentBusy}, crWriter.agentStatuses)
+	currentAgent, err := store.GetAgent(context.Background(), agent.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AgentBusy, currentAgent.Status)
 
 	var completed domain.Task
 	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]string{
 		"status": string(domain.TaskDone),
 	}, http.StatusOK, &completed)
 	require.Equal(t, domain.TaskDone, completed.Status)
-	require.Equal(t, []domain.AgentStatus{domain.AgentIdle, domain.AgentIdle, domain.AgentBusy, domain.AgentIdle}, crWriter.agentStatuses)
+	currentAgent, err = store.GetAgent(context.Background(), agent.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AgentIdle, currentAgent.Status)
 }
 
 func TestAgentCompletionStaysBusyWhenMoreAssignedWorkExists(t *testing.T) {
 	t.Parallel()
 
+	store := storage.NewMemoryStore()
 	crWriter := &fakeCRWriter{}
-	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+	handler := NewWithCRWriter(testConfig(), store, crWriter)
 
 	var squad domain.Squad
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
@@ -800,7 +803,6 @@ func TestAgentCompletionStaysBusyWhenMoreAssignedWorkExists(t *testing.T) {
 	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID, nil, http.StatusOK, &currentAgent)
 	require.Equal(t, domain.AgentBusy, currentAgent.Status)
 	require.NotEmpty(t, second.ID)
-	require.Equal(t, domain.AgentBusy, crWriter.agentStatuses[len(crWriter.agentStatuses)-1])
 }
 
 func TestAgentRuntimeAuthRejectsInvalidCredential(t *testing.T) {
@@ -1099,6 +1101,14 @@ func auditActions(entries []domain.AuditEntry) []string {
 		actions = append(actions, entry.Action)
 	}
 	return actions
+}
+
+func outboxOperations(events []*domain.KubernetesOutboxEvent) []string {
+	operations := make([]string, 0, len(events))
+	for _, event := range events {
+		operations = append(operations, event.Operation+":"+event.AggregateID)
+	}
+	return operations
 }
 
 type fakeCRWriter struct {
