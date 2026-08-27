@@ -11,7 +11,8 @@ import os
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from time import sleep as default_sleep
+from typing import Callable, Mapping, Protocol
 from urllib import error, request
 
 
@@ -61,6 +62,16 @@ class RuntimeTask:
     description: str
     status: str
     assignee_agent_id: str
+
+
+@dataclass(frozen=True)
+class TaskResult:
+    status: str = "in-review"
+
+
+class TaskHandler(Protocol):
+    def handle_task(self, task: RuntimeTask, config: BootstrapConfig) -> TaskResult:
+        ...
 
 
 def load_bootstrap_config(environ: Mapping[str, str] | None = None) -> BootstrapConfig:
@@ -151,6 +162,10 @@ class ControlPlaneClient:
             return None
         return runtime_task(payload)
 
+    def start_task(self, task_id: str) -> RuntimeTask:
+        payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/start", None)
+        return runtime_task(payload)
+
     def complete_task(self, task_id: str, status: str = "in-review") -> RuntimeTask:
         payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/complete", {"status": status})
         return runtime_task(payload)
@@ -206,6 +221,55 @@ def poll_once(config: BootstrapConfig, client: ControlPlaneClient | None = None)
         return None
     control_plane.heartbeat("busy")
     return task
+
+
+def run_task_once(
+    config: BootstrapConfig,
+    handler: TaskHandler,
+    client: ControlPlaneClient | None = None,
+) -> RuntimeTask | None:
+    status = bootstrap_status(config)
+    if not status.ready:
+        return None
+    control_plane = client or ControlPlaneClient.from_bootstrap(config)
+    task = control_plane.claim_task()
+    if task is None:
+        control_plane.heartbeat("idle")
+        return None
+    control_plane.heartbeat("busy")
+    try:
+        result = handler.handle_task(task, config)
+    except Exception:
+        final_task = control_plane.block_task(task.id)
+        control_plane.heartbeat("idle")
+        return final_task
+    if result.status not in ("in-review", "done", "blocked"):
+        final_task = control_plane.block_task(task.id)
+        control_plane.heartbeat("idle")
+        return final_task
+    if result.status == "blocked":
+        final_task = control_plane.block_task(task.id)
+    else:
+        final_task = control_plane.complete_task(task.id, result.status)
+    control_plane.heartbeat("idle")
+    return final_task
+
+
+def run_task_loop(
+    config: BootstrapConfig,
+    handler: TaskHandler,
+    client: ControlPlaneClient | None = None,
+    poll_interval_seconds: float = 5.0,
+    stop_event: object | None = None,
+    sleeper: Callable[[float], None] = default_sleep,
+) -> None:
+    while not stop_requested(stop_event):
+        run_task_once(config, handler, client)
+        sleeper(poll_interval_seconds)
+
+
+def stop_requested(stop_event: object | None) -> bool:
+    return bool(stop_event is not None and getattr(stop_event, "is_set")())
 
 
 def create_app(config: BootstrapConfig | None = None):

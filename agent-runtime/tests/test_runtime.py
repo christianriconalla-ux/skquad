@@ -4,11 +4,14 @@ from pathlib import Path
 
 from skquad_runtime.runtime import (
     ControlPlaneClient,
+    RuntimeTask,
+    TaskResult,
     bootstrap_status,
     create_app,
     load_bootstrap_config,
     poll_once,
     read_secret_value,
+    run_task_once,
 )
 
 
@@ -137,12 +140,50 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
                 }
             )
-            client = FakeControlPlaneClient(claimed_task=FakeTask("task-1"))
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
 
             task = poll_once(config, client)
 
             self.assertEqual(task.id, "task-1")
             self.assertEqual(client.heartbeats, ["busy"])
+
+    def test_run_task_once_completes_successful_handler_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
+            handler = StaticTaskHandler(TaskResult(status="done"))
+
+            task = run_task_once(config, handler, client)
+
+            self.assertEqual(task.id, "task-1")
+            self.assertEqual(client.completed, [("task-1", "done")])
+            self.assertEqual(client.blocked, [])
+            self.assertEqual(client.heartbeats, ["busy", "idle"])
+
+    def test_run_task_once_blocks_when_handler_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
+            handler = RaisingTaskHandler()
+
+            task = run_task_once(config, handler, client)
+
+            self.assertEqual(task.id, "task-1")
+            self.assertEqual(client.completed, [])
+            self.assertEqual(client.blocked, ["task-1"])
+            self.assertEqual(client.heartbeats, ["busy", "idle"])
+
+    def test_run_task_once_blocks_invalid_handler_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
+            handler = StaticTaskHandler(TaskResult(status="not-real"))
+
+            task = run_task_once(config, handler, client)
+
+            self.assertEqual(task.id, "task-1")
+            self.assertEqual(client.completed, [])
+            self.assertEqual(client.blocked, ["task-1"])
 
 
 class FakeResponse:
@@ -160,15 +201,12 @@ class FakeResponse:
         return self._payload
 
 
-class FakeTask:
-    def __init__(self, task_id):
-        self.id = task_id
-
-
 class FakeControlPlaneClient:
     def __init__(self, claimed_task):
         self.claimed_task = claimed_task
         self.heartbeats = []
+        self.completed = []
+        self.blocked = []
 
     def claim_task(self):
         return self.claimed_task
@@ -176,6 +214,50 @@ class FakeControlPlaneClient:
     def heartbeat(self, status):
         self.heartbeats.append(status)
         return {}
+
+    def complete_task(self, task_id, status="in-review"):
+        self.completed.append((task_id, status))
+        return fake_task(task_id, status=status)
+
+    def block_task(self, task_id):
+        self.blocked.append(task_id)
+        return fake_task(task_id, status="blocked")
+
+
+class StaticTaskHandler:
+    def __init__(self, result):
+        self.result = result
+
+    def handle_task(self, _task, _config):
+        return self.result
+
+
+class RaisingTaskHandler:
+    def handle_task(self, _task, _config):
+        raise RuntimeError("handler failed")
+
+
+def fake_task(task_id, status="in-progress"):
+    return RuntimeTask(
+        id=task_id,
+        squad_id="squad-1",
+        title="Task",
+        description="",
+        status=status,
+        assignee_agent_id="agent-1",
+    )
+
+
+def ready_config(tmp):
+    credential = Path(tmp) / "agent"
+    credential.write_text("credential", encoding="utf-8")
+    return load_bootstrap_config(
+        {
+            "SKQUAD_AGENT_ID": "agent-1",
+            "SKQUAD_SQUAD_ID": "squad-1",
+            "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+        }
+    )
 
 
 if __name__ == "__main__":

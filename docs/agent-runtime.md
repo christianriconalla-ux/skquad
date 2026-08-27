@@ -102,6 +102,12 @@ flowchart LR
 The loop is intentionally small. Complexity is pushed into **plugins** and the
 **LLM**, not the harness.
 
+Current implementation note: the runtime has a handler-driven `run_task_once`
+primitive that performs the lifecycle boundary around one task: claim, report
+busy, invoke a supplied handler, complete to `in-review`/`done`, block on
+handler failure or invalid status, then report idle. The default LLM/plugin
+handler is not implemented yet.
+
 ---
 
 ## 5. LLM Calls (via LiteLLM + the LLM Gateway)
@@ -223,11 +229,9 @@ variables:
 The runtime readiness check reports only booleans for secret presence; it never
 returns raw credential values.
 
-Current implementation includes a small control-plane client and `poll_once`
-primitive. `poll_once` claims the next assigned task, reports `busy` when work
-is present, and reports `idle` when no task is available. It deliberately does
-not synthesize task completion; the real task execution loop lands with the
-plugin/LiteLLM slice.
+Current implementation includes a small control-plane client, a `poll_once`
+claim/heartbeat primitive, and a handler-driven `run_task_once` execution
+primitive. The real LLM/plugin handler lands with the plugin/LiteLLM slice.
 
 ---
 

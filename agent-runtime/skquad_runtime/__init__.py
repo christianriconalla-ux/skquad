@@ -11,20 +11,26 @@ from .runtime import (
     BootstrapConfig,
     ControlPlaneClient,
     RuntimeTask,
+    TaskResult,
     bootstrap_status,
     create_app,
     load_bootstrap_config,
     poll_once,
+    run_task_loop,
+    run_task_once,
 )
 
 __all__ = [
     "BootstrapConfig",
     "ControlPlaneClient",
     "RuntimeTask",
+    "TaskResult",
     "bootstrap_status",
     "create_app",
     "load_bootstrap_config",
     "poll_once",
+    "run_task_loop",
+    "run_task_once",
 ]
 
 __version__ = "0.1.0"
