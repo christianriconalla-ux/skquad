@@ -7,6 +7,13 @@
 - command/test run: `python3 -m unittest discover -s tests/integration`.
 - result: Added a root integration smoke suite that exercises representative control-plane runtime endpoints, Kubernetes outbox and CR-writer paths, operator reconciler contracts, runtime tests, and Helm render wiring. Wired the suite into GitHub Actions as `Integration smoke` and documented fast CI versus cluster-required verification boundaries. Local integration smoke suite passed.
 
+## 2026-08-28 01:09:04 ACST
+
+- objective: Create practical operator install and operations runbook.
+- files changed: `docs/operator-runbook.md`, `docs/deployment-operator.md`, `charts/skquad/README.md`, `README.md`, `WORKLOG.md`.
+- command/test run: `helm lint charts/skquad`; `helm template skquad charts/skquad --namespace skquad-system --include-crds`; production-oriented Helm render with external Postgres, OIDC, LiteLLM master-key, LiteLLM database, and provider API-key Secret refs; `git diff --check`.
+- result: Added a Kubernetes operations runbook covering Helm install/upgrade, production-oriented values, namespace model, generated Secrets, ingress, troubleshooting, scale-to-zero, runtime readiness, RBAC/security notes, and uninstall guidance. Linked it from deployment, chart, and root documentation. Chart lint/render and whitespace checks passed.
+
 ## 2026-08-27 16:33:03 ACST
 
 - objective: Continue Skquad control-plane implementation.

@@ -6,6 +6,9 @@
 > controller-runtime / kubebuilder) manages **squad** and **agent** lifecycle,
 > **namespace isolation**, and **scale-to-zero**. Everything is packaged and
 > deployed with **Helm**.
+>
+> For practical install, upgrade, troubleshooting, and cleanup commands, see
+> the [operator install and operations runbook](operator-runbook.md).
 
 ---
 
