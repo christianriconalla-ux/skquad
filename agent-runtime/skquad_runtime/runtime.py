@@ -914,7 +914,8 @@ def parse_csv(value: str) -> tuple[str, ...]:
 
 
 def create_app(config: BootstrapConfig | None = None):
-    from fastapi import FastAPI, Response, status
+    from fastapi import FastAPI, status
+    from fastapi.responses import JSONResponse
 
     app = FastAPI(title="skquad agent runtime", version="0.1.0")
 
@@ -923,11 +924,10 @@ def create_app(config: BootstrapConfig | None = None):
         return {"status": "ok"}
 
     @app.get("/readyz")
-    def readyz(response: Response) -> dict[str, object]:
+    def readyz() -> JSONResponse:
         status_result = bootstrap_status(config or load_bootstrap_config())
-        if not status_result.ready:
-            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {
+        status_code = status.HTTP_200_OK if status_result.ready else status.HTTP_503_SERVICE_UNAVAILABLE
+        return JSONResponse({
             "ready": status_result.ready,
             "agent_id": status_result.agent_id,
             "squad_id": status_result.squad_id,
@@ -935,7 +935,7 @@ def create_app(config: BootstrapConfig | None = None):
             "credential_loaded": status_result.credential_loaded,
             "virtual_key_loaded": status_result.virtual_key_loaded,
             "task_loop_enabled": status_result.task_loop_enabled,
-        }
+        }, status_code=status_code)
 
     return app
 
