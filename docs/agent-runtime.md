@@ -109,7 +109,10 @@ handler failure or invalid status, then report idle. The default
 `LiteLLMTaskHandler` now reads the mounted LLM gateway virtual key, calls the
 OpenAI-compatible gateway through LiteLLM, exposes plugin tool schemas, invokes
 plugin tool calls, and maps `SKQUAD_STATUS: done|blocked` markers into task
-completion state.
+completion state. Before calling the LLM, it can discover the agent's active
+granted registry resources from `/api/v1/agents/me/resources` and include those
+descriptors in the task context without exposing provider API-key refs or
+resource auth refs.
 
 ---
 
@@ -238,10 +241,11 @@ returns raw credential values.
 
 Current implementation includes a small control-plane client, a `poll_once`
 claim/heartbeat primitive, a handler-driven `run_task_once` execution
-primitive, and a default LiteLLM/plugin handler. The runtime process starts the
-task loop when `SKQUAD_TASK_LOOP_ENABLED` is true while continuing to serve
-health/readiness probes. Dynamic plugin discovery and per-agent model alias
-selection land in later registry/runtime slices.
+primitive, a default LiteLLM/plugin handler, and permission-scoped runtime
+resource discovery. The runtime process starts the task loop when
+`SKQUAD_TASK_LOOP_ENABLED` is true while continuing to serve health/readiness
+probes. Dynamic loading of plugin packages and per-agent model alias selection
+land in later registry/runtime slices.
 
 ---
 

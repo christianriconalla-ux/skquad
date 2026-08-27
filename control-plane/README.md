@@ -57,7 +57,8 @@ Implemented slice:
   material, stored verifier hashes, and public secret/key references
 - Agent registry permission list/set endpoints
 - Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
-  task start/complete/block, and status heartbeats
+  granted active resource discovery, task start/complete/block, and status
+  heartbeats
 - Board retrieval and task create/update/move/delete
 - Access grant create/list/delete
 - LLM provider registry create/list/get/update/deprecate

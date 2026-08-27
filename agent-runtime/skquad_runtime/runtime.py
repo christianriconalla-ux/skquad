@@ -64,6 +64,16 @@ class RuntimeTask:
 
 
 @dataclass(frozen=True)
+class RuntimeResource:
+    resource_type: str
+    resource_id: str
+    name: str
+    description: str
+    endpoint: str
+    manifest: Mapping[str, object]
+
+
+@dataclass(frozen=True)
 class TaskResult:
     status: str = "in-review"
     summary: str = ""
@@ -179,6 +189,10 @@ class ControlPlaneClient:
         payload = self._json("GET", "/api/v1/agents/me/tasks", None)
         return [runtime_task(item) for item in payload]
 
+    def list_resources(self) -> list[RuntimeResource]:
+        payload = self._json("GET", "/api/v1/agents/me/resources", None)
+        return [runtime_resource(item) for item in payload]
+
     def claim_task(self) -> RuntimeTask | None:
         payload = self._json("POST", "/api/v1/agents/me/tasks/claim", None, allow_empty=True)
         if payload is None:
@@ -233,18 +247,36 @@ def runtime_task(payload: Mapping[str, object]) -> RuntimeTask:
     )
 
 
+def runtime_resource(payload: Mapping[str, object]) -> RuntimeResource:
+    manifest = payload.get("manifest") or {}
+    if not isinstance(manifest, Mapping):
+        manifest = {}
+    return RuntimeResource(
+        resource_type=str(payload.get("resource_type", "")),
+        resource_id=str(payload.get("resource_id", "")),
+        name=str(payload.get("name", "")),
+        description=str(payload.get("description", "")),
+        endpoint=str(payload.get("endpoint", "")),
+        manifest=manifest,
+    )
+
+
 class LiteLLMTaskHandler:
     def __init__(
         self,
         plugins: list[RuntimePlugin] | None = None,
+        resources: list[RuntimeResource] | None = None,
         completion: Callable[..., object] | None = None,
         model: str | None = None,
         max_steps: int = 8,
+        discover_resources: bool = True,
     ) -> None:
         self.plugins = plugins or []
+        self.resources = resources
         self._completion = completion
         self.model = model
         self.max_steps = max_steps
+        self.discover_resources = discover_resources
 
     def handle_task(self, task: RuntimeTask, config: BootstrapConfig) -> TaskResult:
         virtual_key = read_secret_value(config.virtual_key_path)
@@ -259,7 +291,7 @@ class LiteLLMTaskHandler:
         messages: list[dict[str, object]] = [
             {
                 "role": "system",
-                "content": system_prompt(config),
+                "content": system_prompt(config, self.available_resources(config)),
             },
             {
                 "role": "user",
@@ -315,6 +347,14 @@ class LiteLLMTaskHandler:
             schemas.extend(plugin.tools())
         return schemas
 
+    def available_resources(self, config: BootstrapConfig) -> list[RuntimeResource]:
+        if self.resources is not None:
+            return self.resources
+        if not self.discover_resources:
+            return []
+        self.resources = ControlPlaneClient.from_bootstrap(config).list_resources()
+        return self.resources
+
     def invoke_tool(self, call: ToolCall, config: BootstrapConfig) -> ToolResult:
         plugin = next((item for item in self.plugins if item.name == call.name), None)
         if plugin is None:
@@ -332,14 +372,29 @@ class LiteLLMTaskHandler:
             return ToolResult(content=f"tool {call.name!r} failed: {exc}", ok=False)
 
 
-def system_prompt(config: BootstrapConfig) -> str:
+def system_prompt(config: BootstrapConfig, resources: list[RuntimeResource] | None = None) -> str:
     role = config.role or "skquad agent"
-    return (
+    prompt = (
         f"You are {role}. Work on exactly one assigned task at a time. "
         "Use available tools when they materially help. Return a concise result. "
         "Use 'SKQUAD_STATUS: done' only when the task is fully complete; use "
         "'SKQUAD_STATUS: blocked' when you cannot proceed."
     )
+    if resources:
+        prompt += "\n\nGranted resources:\n" + "\n".join(resource_prompt_line(item) for item in resources)
+    return prompt
+
+
+def resource_prompt_line(resource: RuntimeResource) -> str:
+    bits = [resource.resource_type, resource.name]
+    if resource.description:
+        bits.append(resource.description)
+    if resource.endpoint:
+        bits.append(resource.endpoint)
+    package_ref = resource.manifest.get("package_ref")
+    if package_ref:
+        bits.append(f"package={package_ref}")
+    return "- " + " | ".join(bits)
 
 
 def task_prompt(task: RuntimeTask) -> str:

@@ -161,6 +161,12 @@ project_workspace(
 - **Deprecated:** hidden from new grants; existing running agents unaffected.
   (Prevents breaking changes from propagating.)
 
+Current implementation note: the control plane exposes
+`GET /api/v1/agents/me/resources` for agent-authenticated runtime discovery.
+The response includes only active resources granted to that agent and omits
+provider API-key refs and resource auth refs. Dynamic package loading still
+belongs to the runtime/plugin-loader slice.
+
 ---
 
 ## 7. Credentials

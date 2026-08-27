@@ -95,6 +95,7 @@ returned by the API.
 > | Method | Path | Description |
 > |--------|------|-------------|
 > | `GET` | `/api/v1/agents/me/tasks` | Tasks assigned to this agent. |
+> | `GET` | `/api/v1/agents/me/resources` | Active registry resources granted to this agent; secret refs are not returned. |
 > | `POST` | `/api/v1/agents/me/tasks/claim` | Idempotently claim the current `in-progress` task or the next assigned `todo` task. |
 > | `POST` | `/api/v1/agents/me/tasks/:id/start` | Mark a task `in-progress` (context reset). |
 > | `POST` | `/api/v1/agents/me/tasks/:id/complete` | Mark a task done / in-review. |

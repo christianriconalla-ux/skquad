@@ -99,6 +99,7 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 			r.Use(s.authenticateAgent)
 
 			r.Get("/tasks", s.listCurrentAgentTasks)
+			r.Get("/resources", s.listCurrentAgentResources)
 			r.Post("/tasks/claim", s.claimCurrentAgentTask)
 			r.Post("/tasks/{taskID}/start", s.startCurrentAgentTask)
 			r.Post("/tasks/{taskID}/complete", s.completeCurrentAgentTask)
@@ -313,6 +314,13 @@ func validateRequired(w http.ResponseWriter, field, value string) bool {
 		return false
 	}
 	return true
+}
+
+func defaultRawJSON(value json.RawMessage, fallback string) json.RawMessage {
+	if len(value) == 0 {
+		return json.RawMessage(fallback)
+	}
+	return value
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -1246,6 +1254,77 @@ func (s *Server) listCurrentAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tasks)
+}
+
+func (s *Server) listCurrentAgentResources(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	perms, err := s.store.ListAgentPermissions(r.Context(), principal.Agent.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	resources := []agentRuntimeResource{}
+	for _, perm := range perms {
+		resource, ok, err := s.agentRuntimeResource(r.Context(), perm)
+		if err != nil {
+			writeStorageError(w, err)
+			return
+		}
+		if ok {
+			resources = append(resources, resource)
+		}
+	}
+	writeJSON(w, http.StatusOK, resources)
+}
+
+type agentRuntimeResource struct {
+	ResourceType domain.ResourceType `json:"resource_type"`
+	ResourceID   string              `json:"resource_id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description,omitempty"`
+	Endpoint     string              `json:"endpoint,omitempty"`
+	Manifest     json.RawMessage     `json:"manifest"`
+}
+
+func (s *Server) agentRuntimeResource(ctx context.Context, perm *domain.AgentPermission) (agentRuntimeResource, bool, error) {
+	if perm.ResourceType == domain.ResLLMProvider {
+		provider, err := s.store.GetLLMProvider(ctx, perm.ResourceID)
+		if err != nil {
+			return agentRuntimeResource{}, false, err
+		}
+		if provider.Status != domain.ResourceActive {
+			return agentRuntimeResource{}, false, nil
+		}
+		manifest, err := json.Marshal(map[string]json.RawMessage{
+			"models": provider.Models,
+		})
+		if err != nil {
+			return agentRuntimeResource{}, false, err
+		}
+		return agentRuntimeResource{
+			ResourceType: perm.ResourceType,
+			ResourceID:   provider.ID,
+			Name:         provider.Name,
+			Description:  provider.Kind,
+			Endpoint:     provider.BaseURL,
+			Manifest:     manifest,
+		}, true, nil
+	}
+	resource, err := s.store.GetResource(ctx, perm.ResourceType, perm.ResourceID)
+	if err != nil {
+		return agentRuntimeResource{}, false, err
+	}
+	if resource.Status != domain.ResourceActive {
+		return agentRuntimeResource{}, false, nil
+	}
+	return agentRuntimeResource{
+		ResourceType: resource.Type,
+		ResourceID:   resource.ID,
+		Name:         resource.Name,
+		Description:  resource.Description,
+		Endpoint:     resource.Endpoint,
+		Manifest:     defaultRawJSON(resource.Manifest, "{}"),
+	}, true, nil
 }
 
 func (s *Server) claimCurrentAgentTask(w http.ResponseWriter, r *http.Request) {

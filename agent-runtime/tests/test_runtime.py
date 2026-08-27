@@ -6,6 +6,7 @@ from pathlib import Path
 from skquad_runtime.runtime import (
     ControlPlaneClient,
     LiteLLMTaskHandler,
+    RuntimeResource,
     RuntimeTask,
     TaskResult,
     ToolResult,
@@ -114,6 +115,26 @@ class RuntimeBootstrapTest(unittest.TestCase):
 
         self.assertIsNone(client.claim_task())
 
+    def test_control_plane_client_lists_runtime_resources(self):
+        calls = []
+
+        def opener(req):
+            calls.append(req)
+            return FakeResponse(
+                200,
+                b'[{"resource_type":"tool","resource_id":"tool-1","name":"echo",'
+                b'"description":"Echo messages","endpoint":"plugin://echo",'
+                b'"manifest":{"package_ref":"builtin://echo"}}]',
+            )
+
+        client = ControlPlaneClient("http://control-plane", "agent-1", "credential", opener=opener)
+
+        resources = client.list_resources()
+
+        self.assertEqual(resources[0].resource_type, "tool")
+        self.assertEqual(resources[0].manifest["package_ref"], "builtin://echo")
+        self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/resources")
+
     def test_poll_once_reports_idle_without_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             credential = Path(tmp) / "agent"
@@ -210,7 +231,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                 calls.append(kwargs)
                 return fake_completion("SKQUAD_STATUS: done\nImplemented.")
 
-            handler = LiteLLMTaskHandler(completion=completion)
+            handler = LiteLLMTaskHandler(completion=completion, discover_resources=False)
 
             result = handler.handle_task(fake_task("task-1"), config)
 
@@ -218,6 +239,47 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(calls[0]["model"], "model-1")
             self.assertEqual(calls[0]["api_base"], "http://gateway")
             self.assertEqual(calls[0]["api_key"], "virtual-key")
+
+    def test_litellm_handler_includes_runtime_resources_in_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                }
+            )
+            calls = []
+
+            def completion(**kwargs):
+                calls.append(kwargs)
+                return fake_completion("Ready for review.")
+
+            handler = LiteLLMTaskHandler(
+                resources=[
+                    RuntimeResource(
+                        resource_type="tool",
+                        resource_id="tool-1",
+                        name="echo",
+                        description="Echo messages",
+                        endpoint="plugin://echo",
+                        manifest={"package_ref": "builtin://echo"},
+                    )
+                ],
+                completion=completion,
+            )
+
+            result = handler.handle_task(fake_task("task-1"), config)
+
+            self.assertEqual(result.status, "in-review")
+            system_message = calls[0]["messages"][0]["content"]
+            self.assertIn("Granted resources:", system_message)
+            self.assertIn("tool | echo | Echo messages | plugin://echo | package=builtin://echo", system_message)
 
     def test_litellm_handler_invokes_plugin_tool_calls(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -243,7 +305,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     return fake_tool_completion("call-1", "echo", {"message": "hello"})
                 return fake_completion("SKQUAD_STATUS: done\nTool observed.")
 
-            handler = LiteLLMTaskHandler(plugins=[plugin], completion=completion)
+            handler = LiteLLMTaskHandler(plugins=[plugin], completion=completion, discover_resources=False)
 
             result = handler.handle_task(fake_task("task-1"), config)
 

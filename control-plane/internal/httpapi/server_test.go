@@ -411,6 +411,73 @@ func TestAgentPermissionsSetAndList(t *testing.T) {
 	require.Equal(t, "not_found", body["error"]["code"])
 }
 
+func TestAgentRuntimeResourcesReturnsGrantedActiveResources(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Runtime Resource Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Runtime Resource Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+
+	var provider domain.LLMProvider
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/llm-providers", map[string]any{
+		"name":        "Gateway Model",
+		"kind":        "openai-compatible",
+		"base_url":    "http://llm-gateway/v1",
+		"api_key_ref": "secret/provider-key",
+		"models":      []string{"model-a"},
+	}, http.StatusCreated, &provider)
+
+	var tool domain.RegistryResource
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/tools", map[string]any{
+		"name":        "echo",
+		"description": "Echo messages",
+		"endpoint":    "plugin://echo",
+		"auth_ref":    "secret/tool-key",
+		"manifest": map[string]any{
+			"package_ref": "builtin://echo",
+		},
+	}, http.StatusCreated, &tool)
+
+	var deprecated domain.RegistryResource
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/skills", map[string]any{
+		"name": "old-skill",
+	}, http.StatusCreated, &deprecated)
+	doJSONNoBody(t, handler, http.MethodPost, "/api/v1/registry/skills/"+deprecated.ID+"/deprecate", nil, http.StatusNoContent)
+
+	var perms []domain.AgentPermission
+	doJSON(t, handler, http.MethodPut, "/api/v1/agents/"+agent.ID+"/permissions", []map[string]string{
+		{"resource_type": string(domain.ResLLMProvider), "resource_id": provider.ID},
+		{"resource_type": string(domain.ResTool), "resource_id": tool.ID},
+		{"resource_type": string(domain.ResSkill), "resource_id": deprecated.ID},
+	}, http.StatusOK, &perms)
+	require.Len(t, perms, 3)
+
+	var resources []map[string]any
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodGet, "/api/v1/agents/me/resources", nil, http.StatusOK, &resources)
+
+	require.Len(t, resources, 2)
+	require.Equal(t, string(domain.ResLLMProvider), resources[0]["resource_type"])
+	require.Equal(t, provider.ID, resources[0]["resource_id"])
+	require.Equal(t, "http://llm-gateway/v1", resources[0]["endpoint"])
+	require.NotContains(t, resources[0], "api_key_ref")
+	require.Equal(t, string(domain.ResTool), resources[1]["resource_type"])
+	require.Equal(t, tool.ID, resources[1]["resource_id"])
+	require.NotContains(t, resources[1], "auth_ref")
+}
+
 func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	t.Parallel()
 
@@ -597,6 +664,24 @@ func testConfig() *config.Config {
 func doJSON(t *testing.T, handler http.Handler, method, path string, body any, wantStatus int, out any) {
 	t.Helper()
 	doJSONAuth(t, handler, "", method, path, body, wantStatus, out)
+}
+
+func doJSONNoBody(t *testing.T, handler http.Handler, method, path string, body any, wantStatus int) {
+	t.Helper()
+
+	var payload []byte
+	var err error
+	if body != nil {
+		payload, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, wantStatus, rec.Code, rec.Body.String())
 }
 
 func doJSONAuth(t *testing.T, handler http.Handler, authorization, method, path string, body any, wantStatus int, out any) {
