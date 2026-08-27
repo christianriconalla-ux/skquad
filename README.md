@@ -1,147 +1,199 @@
 # skquad
 
-> **An open-source, cloud-native Agentic AI platform.**
-> Build, run, and govern **squads of AI agents** on Kubernetes — in minutes.
+> A Kubernetes-native control plane for building and operating squads of AI
+> agents.
 
-skquad gives teams a low-barrier way to create **squads of AI agents** that
-collaborate on tasks via a **Kanban board**. It is **Bring-Your-Own-Model
-(BYOM)**, **enterprise-secure** (OIDC, two-layer RBAC, audit), and
-**multi-tenant** (each squad isolated in its own Kubernetes namespace).
+skquad models agent collaboration as squads, agents, Kanban tasks, messages,
+resource grants, and task-scoped memory. It combines a Go control-plane API, a
+Kubernetes operator, a Python agent runtime, and a central LiteLLM gateway so
+that agent identity, permissions, model access, and lifecycle remain under
+platform control.
 
----
+> [!IMPORTANT]
+> skquad is an early-stage project with a working vertical slice; it is not yet
+> production-ready. The web application is currently a placeholder, and the
+> default Helm values intentionally use development authentication and
+> credentials. See [Current status](#current-status) before deploying it.
 
-## Why skquad?
+## How it works
 
-- **Minutes to first agent** — a new user can go from login to a running squad
-  with a single agent and a working LLM provider in a few clicks.
-- **BYOM** — agents can use any LLM in the platform's provider registry.
-- **Enterprise-grade security** — OIDC identity, two-layer RBAC, full audit.
-- **Multi-user, multi-squad** — many users, each owning isolated squads.
-- **Extensible via plugins** — the core stays small; capabilities plug in.
+skquad separates management concerns from agent workloads:
 
-> skquad deliberately avoids the complexity of existing agentic platforms. The
-> initial surface is small and easy to start; the architecture is designed for
-> extension, not feature-maximalism.
+- The **control plane** runs the API server, PostgreSQL, LiteLLM gateway, web
+  application, and operator in `skquad-system`.
+- The **data plane** runs each squad in its own Kubernetes namespace. Agent
+  Deployments wake for assigned work and scale back to zero after becoming
+  idle.
 
----
+```text
+Clients ───────► Control-plane API ───────► PostgreSQL
+                      │
+                      └── durable outbox ─► Squad and Agent CRs
+                                                   │
+                                               Operator
+                                                   │
+                                      per-squad namespaces and agent pods
 
-## Core Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **Squad** | A team of agents with a mission + operating model. Isolated in its own K8s namespace. Owned by one user. |
-| **Agent** | A member of a squad. Runs in its own pod. Has its own identity, credentials, and permissions. |
-| **Kanban Board** | One per squad — the primary work surface. Tasks are the unit of work. |
-| **Task** | A unit of work assigned to an agent. An agent's context resets before each new task. |
-| **Resource Registry** | The catalog agents can use: LLM providers, skills, tools, APIs, knowledge bases, project workspaces. |
-| **Access Grant** | An owner granting another user/agent the right to talk to a squad's agents. |
-
----
-
-## Architecture (two planes)
-
-- **Control plane** (`skquad-system` namespace) — API server, web app, resource
-  registry, identity/RBAC, **LLM gateway** (metering + BYOM), message queue, and
-  the **operator**. Always-on; the single enforcement point for security and
-  metering.
-- **Data plane** (one namespace per squad) — the **agent pods**, each running a
-  thin agent runtime. Agents **scale to zero** when idle.
-
-```
-Web App → API Server (OIDC, RBAC) → Postgres
-                │  enqueues Kubernetes outbox intents
-                ▼
-             Operator ──► squad namespaces (agent pods, scale-to-zero)
-Agent pods ──► LLM Gateway (LiteLLM proxy: metering, cost, BYOM, perms)
+Agent runtime ── tasks, messages, context ─────► Control-plane API
+              └─ model requests ───────────────► LiteLLM gateway ─► providers
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design.
+The control plane is the source of truth. Kubernetes custom resources are
+derived execution state reconciled by the operator; agent runtimes do not
+receive direct database access or provider credentials.
 
-Current implementation status: the control-plane API, operator, Helm chart, and
-Python agent runtime have working vertical slices for squad/agent/task
-lifecycle, generated runtime credentials, task wake-up/scale-down, messaging
-inbox APIs, runtime inbox draining, granted resource discovery, dynamic runtime
-plugins, task-scoped context with bounded recent memory, operator deletion
-finalizers, a durable Kubernetes outbox for Squad/Agent CR convergence, and
-LiteLLM gateway bootstrap/key provisioning. The web app is still an early
-placeholder, and semantic vector memory search plus gateway metering callbacks
-remain planned follow-ups.
+Read the [architecture overview](docs/ARCHITECTURE.md) and the
+[runtime architecture ADR](docs/adr/0001-agent-runtime.md) for the design in
+detail.
 
----
+## Core concepts
 
-## Repository Layout
+| Concept | Meaning |
+| --- | --- |
+| **Squad** | A user-owned team of agents with a mission and operating model. Each squad is isolated in its own Kubernetes namespace. |
+| **Agent** | A squad member with an independent runtime, identity, credentials, permissions, and bounded task context. |
+| **Board and task** | Each squad has a Kanban board. Tasks are the durable unit of work assigned to agents. |
+| **Resource registry** | The catalog of LLM providers, skills, tools, APIs, knowledge sources, and project workspaces available to the platform. |
+| **Permission** | An explicit grant connecting an agent to a registry resource. |
+| **Access grant** | Permission for another user to interact with a squad or one of its agents. |
 
+## Components
+
+| Component | Technology | Responsibility |
+| --- | --- | --- |
+| [`control-plane/`](control-plane/) | Go | REST API, human and agent authentication, domain state, authorization, audit events, and Kubernetes outbox. |
+| [`operator/`](operator/) | Go, controller-runtime | Reconciles `Squad` and `Agent` resources into namespaces, workloads, and scale-to-zero lifecycle. |
+| [`agent-runtime/`](agent-runtime/) | Python, FastAPI | Claims tasks, assembles context, loads granted plugins, calls models, drains messages, and reports outcomes. |
+| [`llm-gateway/`](llm-gateway/) | LiteLLM | Central model proxy and per-agent virtual-key boundary. |
+| [`web/`](web/) | Next.js | Intended user interface; currently only an application shell. |
+| [`charts/skquad/`](charts/skquad/) | Helm | Installs the control plane, CRDs, operator, gateway, web app, and optional PostgreSQL. |
+
+## Current status
+
+The repository currently implements:
+
+- squad, agent, board, task, access-grant, resource-registry, permission,
+  messaging, audit, and metering-read APIs;
+- development authentication, OIDC token validation, and separate
+  agent-service credentials;
+- PostgreSQL persistence with a process-local in-memory option for API
+  development and tests;
+- durable outbox delivery of Squad and Agent custom-resource changes;
+- operator reconciliation, deletion finalizers, workload wake-up, and
+  idle scale-down;
+- task claiming and completion, task-scoped context, bounded recent memory,
+  inbox processing, and permission-filtered runtime plugins;
+- LiteLLM gateway deployment and agent-scoped virtual-key provisioning; and
+- Helm packaging plus CI validation and versioned container images.
+
+Important gaps remain:
+
+- the web application does not yet expose the documented product workflows;
+- LiteLLM metering callbacks and automatic key refresh or revocation after
+  permission changes are not implemented;
+- semantic vector memory and durable artifact storage are planned;
+- task execution leases, transactional task-result persistence, and message
+  dead-letter handling need further work; and
+- production ingress, TLS, external-database operations, observability, and
+  network-policy hardening are not complete.
+
+The detailed source-of-truth requirements are in
+[`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md). Component READMEs describe the
+implemented slice and their next steps.
+
+## Development deployment
+
+### Prerequisites
+
+- a Kubernetes cluster and `kubectl` configured for it;
+- Helm 3; and
+- access to the container images configured in
+  [`charts/skquad/values.yaml`](charts/skquad/values.yaml).
+
+Install the default development stack:
+
+```bash
+helm upgrade --install skquad charts/skquad \
+  --namespace skquad-system \
+  --create-namespace
+
+kubectl --namespace skquad-system get pods
+kubectl --namespace skquad-system rollout status deployment/skquad-api-server
 ```
-skquad/
-├── README.md
-├── docs/                     # design & architecture documentation
-│   ├── REQUIREMENTS.md
-│   ├── ARCHITECTURE.md
-│   ├── domain-model.md
-│   ├── agent-runtime.md
-│   ├── llm-gateway.md
-│   ├── identity-security.md
-│   ├── resource-registry.md
-│   ├── kanban-task-lifecycle.md
-│   ├── collaboration-messaging.md
-│   ├── deployment-operator.md
-│   ├── observability-metering.md
-│   ├── data-model.md
-│   ├── api-design.md
-│   ├── web-app-ux.md
-│   ├── plugin-architecture.md
-│   ├── security-threat-model.md
-│   └── adr/                  # architecture decision records
-├── control-plane/            # API server (Go)
-├── operator/                 # K8s operator (Go, controller-runtime)
-├── agent-runtime/            # agent harness (Python, LiteLLM + plugins)
-├── llm-gateway/              # LLM gateway (LiteLLM proxy, Python)
-├── web/                      # web app (React / Next.js, TypeScript)
-├── charts/skquad/            # Helm chart
-└── .github/workflows/        # CI and container image publishing
+
+Verify the API from another terminal:
+
+```bash
+kubectl --namespace skquad-system port-forward service/skquad-api-server 8080:80
+curl --fail http://127.0.0.1:8080/healthz
 ```
 
----
+The default installation is suitable only for development. It enables a fixed
+development admin identity, deploys an in-cluster PostgreSQL instance with a
+development password, creates a development LiteLLM master key, and does not
+enable ingress.
+
+The default LiteLLM `model_list` is also empty. Before an agent can execute
+model-backed work, configure at least one provider model and supply its
+credentials through Kubernetes Secrets. The
+[Helm chart guide](charts/skquad/README.md) covers provider configuration,
+external secrets, image overrides, and production considerations.
+
+## Local development
+
+The toolchains currently used by CI are Go 1.26 (the control plane itself
+declares Go 1.23), Python 3.11, Node.js 20, and Helm 3.
+
+Run the API without Kubernetes or PostgreSQL:
+
+```bash
+cd control-plane
+go test ./...
+SKQUAD_ADDR=127.0.0.1:8080 go run ./cmd/api
+```
+
+This starts the API in development-auth mode with process-local storage; all
+data is lost when the process exits. Set `SKQUAD_DATABASE_URL` for PostgreSQL,
+or see the [control-plane guide](control-plane/README.md) for OIDC, Kubernetes,
+runtime, and gateway configuration.
+
+Run the main repository checks:
+
+```bash
+(cd control-plane && go vet ./... && go test ./...)
+(cd operator && go vet ./... && go test ./...)
+(cd agent-runtime && python -m pip install -e . && python -m unittest discover -s tests)
+(cd web && npm ci && npm run build)
+helm lint charts/skquad
+helm template skquad charts/skquad --namespace skquad-system --include-crds >/dev/null
+```
+
+The CI workflow also builds and smoke-tests the LiteLLM gateway container. See
+the [CI/CD guide](docs/ci-cd.md) for image names, tags, and publishing behavior.
 
 ## Documentation
 
-| Document | Purpose |
-|----------|---------|
-| [Requirements](docs/REQUIREMENTS.md) | Refined v1 requirements (FR/NFR). |
-| [Architecture](docs/ARCHITECTURE.md) | High-level two-plane architecture. |
-| [Domain Model](docs/domain-model.md) | Entities, relationships, lifecycle. |
-| [Agent Runtime](docs/agent-runtime.md) | The agent harness design. |
-| [LLM Gateway](docs/llm-gateway.md) | Metering, cost, BYOM, permissions. |
-| [Identity & Security](docs/identity-security.md) | OIDC, RBAC, agent identity, audit. |
-| [Resource Registry](docs/resource-registry.md) | The resource catalog. |
-| [Kanban & Tasks](docs/kanban-task-lifecycle.md) | Board + task lifecycle. |
-| [Collaboration & Messaging](docs/collaboration-messaging.md) | Async agent↔agent. |
-| [Deployment & Operator](docs/deployment-operator.md) | K8s, CRDs, scale-to-zero, Helm. |
-| [Observability & Metering](docs/observability-metering.md) | Prometheus + token/cost. |
-| [Data Model](docs/data-model.md) | Postgres schema. |
-| [API Design](docs/api-design.md) | Control-plane REST API. |
-| [Web App & UX](docs/web-app-ux.md) | SPA flows + screens. |
-| [Plugin Architecture](docs/plugin-architecture.md) | Extensibility via plugins. |
-| [Security & Threat Model](docs/security-threat-model.md) | Threats + mitigations. |
-| [CI/CD](docs/ci-cd.md) | Validation workflow and delivery follow-ups. |
-| [ADRs](docs/adr/) | Key architectural decisions. |
+| Area | Documents |
+| --- | --- |
+| Product scope | [Requirements](docs/REQUIREMENTS.md), [domain model](docs/domain-model.md) |
+| System design | [Architecture](docs/ARCHITECTURE.md), [data model](docs/data-model.md), [API design](docs/api-design.md), [ADRs](docs/adr/) |
+| Agent execution | [Runtime](docs/agent-runtime.md), [task lifecycle](docs/kanban-task-lifecycle.md), [messaging](docs/collaboration-messaging.md), [plugins](docs/plugin-architecture.md) |
+| Platform services | [LLM gateway](docs/llm-gateway.md), [resource registry](docs/resource-registry.md), [operator and deployment](docs/deployment-operator.md) |
+| Operations and security | [Identity and security](docs/identity-security.md), [threat model](docs/security-threat-model.md), [observability and metering](docs/observability-metering.md), [CI/CD](docs/ci-cd.md) |
+| User experience | [Web application UX](docs/web-app-ux.md) |
 
----
+## Security and production use
 
-## Status
-
-- **Phase 1 — Requirements & Foundation:** ✅ complete.
-- **Phase 2 — Architecture Design:** ✅ complete (this repo's `docs/`).
-- **Phase 3 — Delivery:** 🚧 in progress (see the [Kanban board](#project-board)).
-
----
-
-## Project Board
-
-Tasks are tracked on the **skquad** board in Kanbunny.
-
----
+The security documentation describes the intended architecture as well as the
+implemented controls; it should not be read as a certification of the current
+release. At minimum, a non-development deployment must use OIDC, externally
+managed secrets, a production PostgreSQL service, configured provider
+credentials, TLS ingress, restrictive network policy, resource limits, and a
+backup and monitoring strategy. Review the
+[identity and security design](docs/identity-security.md),
+[threat model](docs/security-threat-model.md), and
+[chart guidance](charts/skquad/README.md) before exposing the system.
 
 ## License
 
-TBD (open-source — license to be chosen).
+Licensed under the [Apache License 2.0](LICENSE).

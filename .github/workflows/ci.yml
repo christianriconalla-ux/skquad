@@ -64,6 +64,20 @@ jobs:
   llm-gateway:
     name: LLM gateway
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: skquad
+          POSTGRES_USER: skquad
+          POSTGRES_PASSWORD: skquad-dev-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U skquad -d skquad"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -88,10 +102,56 @@ jobs:
           PY
       - name: Build gateway image
         run: docker build -t skquad-llm-gateway-ci ./llm-gateway
-      - name: Smoke test Prisma client
-        run: >-
-          docker run --rm --entrypoint python skquad-llm-gateway-ci
-          -c "from pathlib import Path; generated = Path('/usr/local/lib/python3.11/site-packages/prisma/client.py'); assert generated.exists(), f'missing generated Prisma client: {generated}'; import prisma.engine.errors; print('OK: Prisma client generated and importable')"
+      - name: Smoke test Prisma client against Postgres
+        run: |
+          docker run --rm -i --network host --entrypoint python \
+            -e DATABASE_URL='postgres://skquad:skquad-dev-password@127.0.0.1:5432/skquad?sslmode=disable&schema=litellm' \
+            skquad-llm-gateway-ci - <<'PY'
+          import asyncio
+          from pathlib import Path
+
+          from prisma import Prisma
+
+          generated = Path("/usr/local/lib/python3.11/site-packages/prisma/client.py")
+          assert generated.exists(), f"missing generated Prisma client: {generated}"
+
+          async def main():
+              db = Prisma()
+              await db.connect()
+              await db.disconnect()
+
+          asyncio.run(main())
+          print("OK: Prisma client can connect to Postgres")
+          PY
+      - name: Smoke test LiteLLM startup against Postgres
+        run: |
+          docker rm -f skquad-llm-gateway-smoke >/dev/null 2>&1 || true
+          cleanup() {
+            docker rm -f skquad-llm-gateway-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run -d --name skquad-llm-gateway-smoke --network host \
+            -e LITELLM_MASTER_KEY='sk-test-master-key' \
+            -e LITELLM_MIGRATION_DIR='/tmp/litellm-migrations' \
+            -e DATABASE_URL='postgres://skquad:skquad-dev-password@127.0.0.1:5432/skquad?sslmode=disable&schema=litellm' \
+            skquad-llm-gateway-ci --config /etc/skquad/config.yaml --host 0.0.0.0 --port 54000
+
+          for _ in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:54000/health/liveliness >/dev/null; then
+              curl --fail --silent --show-error http://127.0.0.1:54000/health/readiness >/dev/null
+              echo "OK: LiteLLM gateway started and passed readiness"
+              exit 0
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -qx skquad-llm-gateway-smoke; then
+              docker logs skquad-llm-gateway-smoke
+              exit 1
+            fi
+            sleep 2
+          done
+
+          docker logs skquad-llm-gateway-smoke
+          exit 1
 
   helm:
     name: Helm chart

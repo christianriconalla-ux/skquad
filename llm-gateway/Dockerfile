@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PRISMA_HOME_DIR=/home/skquad/.cache/prisma-python
 
 WORKDIR /app
 COPY pyproject.toml ./
@@ -12,8 +13,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --upgrade pip \
     && python -m pip install . \
+    && useradd --create-home --uid 65532 --shell /usr/sbin/nologin skquad \
     && prisma generate --schema /usr/local/lib/python3.11/site-packages/litellm/proxy/schema.prisma \
-    && useradd --create-home --uid 65532 --shell /usr/sbin/nologin skquad
+    && HOME=/home/skquad python -m prisma py fetch \
+    && chown -R 65532:65532 /home/skquad
 
 USER 65532:65532
 EXPOSE 4000

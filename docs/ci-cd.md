@@ -24,7 +24,7 @@ still defaults to development authentication.
 | Control plane | `go vet ./...` and `go test ./...` in `control-plane/` |
 | Operator | `go vet ./...` and `go test ./...` in `operator/` |
 | Agent runtime | installs the Python package, runs `unittest`, and compiles runtime/test modules |
-| LLM gateway | validates Python project metadata/config, builds the gateway image, and checks generated Prisma client artifacts |
+| LLM gateway | validates Python project metadata/config, builds the gateway image, checks generated Prisma client artifacts against Postgres, and smoke-tests LiteLLM readiness against Postgres |
 | Helm chart | `helm lint`, default chart render, and provider-configured gateway render |
 | Web | deterministic `npm ci` and `next build` |
 
@@ -35,6 +35,8 @@ still defaults to development authentication.
   updater wiring is still optional follow-up work.
 - Kubernetes server-side dry-runs are still done locally against the lab
   cluster when a chart change needs API admission validation.
+- Lab deployment promotion is considered complete only after ArgoCD applies the
+  pinned `sha-<short-sha>` image set and the deployed workloads become healthy.
 - The web job builds the current placeholder app shell; product UI coverage is
   tracked separately.
 

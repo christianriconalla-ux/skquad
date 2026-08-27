@@ -22,8 +22,9 @@ llm-gateway/
 - Uses `DATABASE_URL` so LiteLLM can persist generated virtual keys and spend
   state. The Helm chart targets a separate `litellm` Postgres schema when it
   uses the bundled database.
-- Includes `prisma` explicitly and generates LiteLLM's Prisma client during the
-  image build because persistent virtual-key state requires Prisma binaries at
+- Includes `prisma` explicitly, generates LiteLLM's Prisma client during the
+  image build, and fetches the Prisma query engine into the non-root runtime
+  user's cache because persistent virtual-key state requires Prisma binaries at
   proxy startup.
 - Uses `LITELLM_MIGRATION_DIR` for writable LiteLLM migration/baseline state at
   runtime.

@@ -65,8 +65,9 @@ the development `llmGateway.masterKey` value. Set `llmGateway.databaseUrl` or
 definitions in `llmGateway.config` and inject provider API keys with
 `llmGateway.extraEnv` or `llmGateway.extraEnvFrom`; do not place real API keys
 in the config map.
-The gateway image includes LiteLLM proxy dependencies plus generated Prisma
-client artifacts for persistent virtual-key storage.
+The gateway image includes LiteLLM proxy dependencies, generated Prisma client
+artifacts, and a fetched Prisma query-engine binary for persistent virtual-key
+storage.
 
 `llmGateway.probes.startup` gives LiteLLM time to prepare database-backed proxy
 state before liveness checks can restart the container. Tune it upward if a
