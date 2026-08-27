@@ -75,6 +75,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				{Name: "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH", Value: credentialsMount + "/llm-gateway"},
 				{Name: "SKQUAD_CONTROL_PLANE_URL", Value: agent.Spec.ControlPlaneURL},
 				{Name: "SKQUAD_LLM_GATEWAY_URL", Value: agent.Spec.LLMGatewayURL},
+				{Name: "SKQUAD_TASK_LOOP_ENABLED", Value: "true"},
 			},
 			LivenessProbe:  httpProbe("/healthz"),
 			ReadinessProbe: httpProbe("/readyz"),

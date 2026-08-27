@@ -12,7 +12,7 @@ loop, and the plugin interface. Model-agnostic and extensible.
 agent-runtime/
 ├── skquad_runtime/
 │   ├── __init__.py
-│   └── runtime.py         # bootstrap, health/readiness, core loop shell
+│   └── runtime.py         # bootstrap, health/readiness, core loop/handler
 ├── tests/
 │   └── test_runtime.py
 └── pyproject.toml
@@ -29,7 +29,13 @@ agent-runtime/
 - Provides `poll_once` for claim/heartbeat checks and `run_task_once` for the
   first handler-driven execution loop: claim a task, run an injected handler,
   complete to `in-review`/`done`, or block on handler failure.
+- Provides a default `LiteLLMTaskHandler` that reads the mounted LLM gateway
+  virtual key, calls the OpenAI-compatible gateway through LiteLLM, exposes
+  registered plugin tool schemas, and invokes plugin tool calls.
+- Starts the task loop in the runtime process when `SKQUAD_TASK_LOOP_ENABLED`
+  is true (the operator sets it true for agent pods) while still serving
+  `/healthz` and `/readyz`.
 - Provides the `skquad-agent-runtime` console script.
 
-The default LLM/plugin task handler, inbox draining, and memory store are still
-upcoming slices.
+Inbox draining, dynamic plugin discovery, and memory store integration are
+still upcoming slices.

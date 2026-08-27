@@ -105,8 +105,11 @@ The loop is intentionally small. Complexity is pushed into **plugins** and the
 Current implementation note: the runtime has a handler-driven `run_task_once`
 primitive that performs the lifecycle boundary around one task: claim, report
 busy, invoke a supplied handler, complete to `in-review`/`done`, block on
-handler failure or invalid status, then report idle. The default LLM/plugin
-handler is not implemented yet.
+handler failure or invalid status, then report idle. The default
+`LiteLLMTaskHandler` now reads the mounted LLM gateway virtual key, calls the
+OpenAI-compatible gateway through LiteLLM, exposes plugin tool schemas, invokes
+plugin tool calls, and maps `SKQUAD_STATUS: done|blocked` markers into task
+completion state.
 
 ---
 
@@ -122,11 +125,15 @@ handler is not implemented yet.
   key.
 
 ```python
-# Pseudocode
-resp = litellm.completion(
-    model=agent.default_model,          # e.g. "gpt-4o", "claude-...", "llama3"
+# Current runtime shape
+handler = LiteLLMTaskHandler(plugins=enabled_plugins)
+result = handler.handle_task(task, config)
+
+# Internally this calls:
+litellm.completion(
+    model=config.default_provider_id,   # temporary model/routing hint
     messages=working_context.messages,
-    api_base=LLM_GATEWAY_URL,           # central gateway
+    api_base=config.llm_gateway_url,    # central gateway
     api_key=agent.virtual_key,          # per-agent virtual key
     tools=enabled_tool_schemas,         # from plugins
 )
@@ -230,8 +237,11 @@ The runtime readiness check reports only booleans for secret presence; it never
 returns raw credential values.
 
 Current implementation includes a small control-plane client, a `poll_once`
-claim/heartbeat primitive, and a handler-driven `run_task_once` execution
-primitive. The real LLM/plugin handler lands with the plugin/LiteLLM slice.
+claim/heartbeat primitive, a handler-driven `run_task_once` execution
+primitive, and a default LiteLLM/plugin handler. The runtime process starts the
+task loop when `SKQUAD_TASK_LOOP_ENABLED` is true while continuing to serve
+health/readiness probes. Dynamic plugin discovery and per-agent model alias
+selection land in later registry/runtime slices.
 
 ---
 

@@ -31,11 +31,11 @@ operator/
   `status.idleSince + spec.idleTimeout` before scaling inactive agents to zero,
   uses the squad agent ServiceAccount, mounts optional agent
   credential/virtual-key Secrets, passes runtime bootstrap env vars including
-  control-plane/gateway URLs, configures `/healthz` and `/readyz` probes, and
-  writes basic ready status
+  control-plane/gateway URLs, enables the runtime task loop, configures
+  `/healthz` and `/readyz` probes, and writes basic ready status
 - Helm CRDs for `squads.skquad.io` and `agents.skquad.io`
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
   and Deployment
 
-Next slices are the full runtime task execution loop and configurable egress
-policy generation from registry grants.
+Next slices are dynamic plugin discovery and configurable egress policy
+generation from registry grants.

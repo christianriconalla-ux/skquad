@@ -1,14 +1,12 @@
-"""Agent runtime bootstrap and health surface.
-
-The full task loop lands later. This module defines the runtime contract the
-operator already provides: environment configuration plus read-only mounted
-credential directories.
-"""
+"""Agent runtime bootstrap, health surface, and task loop."""
 
 from __future__ import annotations
 
 import os
 import json
+import inspect
+import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep as default_sleep
@@ -19,6 +17,7 @@ from urllib import error, request
 DEFAULT_CREDENTIALS_DIR = Path("/var/run/skquad/credentials")
 DEFAULT_AGENT_CREDENTIAL_PATH = DEFAULT_CREDENTIALS_DIR / "agent"
 DEFAULT_VIRTUAL_KEY_PATH = DEFAULT_CREDENTIALS_DIR / "llm-gateway"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -67,10 +66,34 @@ class RuntimeTask:
 @dataclass(frozen=True)
 class TaskResult:
     status: str = "in-review"
+    summary: str = ""
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    content: str
+    ok: bool = True
 
 
 class TaskHandler(Protocol):
     def handle_task(self, task: RuntimeTask, config: BootstrapConfig) -> TaskResult:
+        ...
+
+
+class RuntimePlugin(Protocol):
+    name: str
+
+    def tools(self) -> list[Mapping[str, object]]:
+        ...
+
+    def invoke(self, call: ToolCall, config: BootstrapConfig) -> ToolResult | str:
         ...
 
 
@@ -210,6 +233,186 @@ def runtime_task(payload: Mapping[str, object]) -> RuntimeTask:
     )
 
 
+class LiteLLMTaskHandler:
+    def __init__(
+        self,
+        plugins: list[RuntimePlugin] | None = None,
+        completion: Callable[..., object] | None = None,
+        model: str | None = None,
+        max_steps: int = 8,
+    ) -> None:
+        self.plugins = plugins or []
+        self._completion = completion
+        self.model = model
+        self.max_steps = max_steps
+
+    def handle_task(self, task: RuntimeTask, config: BootstrapConfig) -> TaskResult:
+        virtual_key = read_secret_value(config.virtual_key_path)
+        if virtual_key is None:
+            raise RuntimeError("LLM gateway virtual key is not loaded")
+        if not config.llm_gateway_url:
+            raise RuntimeError("SKQUAD_LLM_GATEWAY_URL is required")
+        model = self.model or config.default_provider_id
+        if not model:
+            raise RuntimeError("SKQUAD_DEFAULT_PROVIDER_ID is required")
+
+        messages: list[dict[str, object]] = [
+            {
+                "role": "system",
+                "content": system_prompt(config),
+            },
+            {
+                "role": "user",
+                "content": task_prompt(task),
+            },
+        ]
+        tools = self.tool_schemas()
+        completion = self.completion()
+        last_content = ""
+
+        for _ in range(self.max_steps):
+            completion_kwargs: dict[str, object] = {
+                "model": model,
+                "messages": messages,
+                "api_base": config.llm_gateway_url.rstrip("/"),
+                "api_key": virtual_key,
+            }
+            if tools:
+                completion_kwargs["tools"] = tools
+            response = completion(**completion_kwargs)
+            message = first_message(response)
+            content = str(message_value(message, "content") or "")
+            last_content = content
+            tool_calls = parse_tool_calls(message)
+            messages.append(assistant_message(content, tool_calls))
+            if not tool_calls:
+                return TaskResult(status=status_from_content(content), summary=content)
+            for call in tool_calls:
+                result = self.invoke_tool(call, config)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "name": call.name,
+                        "content": result.content,
+                    }
+                )
+
+        return TaskResult(status="in-review", summary=last_content)
+
+    def completion(self) -> Callable[..., object]:
+        if self._completion is not None:
+            return self._completion
+        try:
+            from litellm import completion
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("litellm is required for the default task handler") from exc
+        return completion
+
+    def tool_schemas(self) -> list[Mapping[str, object]]:
+        schemas: list[Mapping[str, object]] = []
+        for plugin in self.plugins:
+            schemas.extend(plugin.tools())
+        return schemas
+
+    def invoke_tool(self, call: ToolCall, config: BootstrapConfig) -> ToolResult:
+        plugin = next((item for item in self.plugins if item.name == call.name), None)
+        if plugin is None:
+            return ToolResult(content=f"tool {call.name!r} is not available", ok=False)
+        try:
+            result = plugin.invoke(call, config)
+            if inspect.isawaitable(result):
+                import asyncio
+
+                result = asyncio.run(result)
+            if isinstance(result, ToolResult):
+                return result
+            return ToolResult(content=str(result))
+        except Exception as exc:
+            return ToolResult(content=f"tool {call.name!r} failed: {exc}", ok=False)
+
+
+def system_prompt(config: BootstrapConfig) -> str:
+    role = config.role or "skquad agent"
+    return (
+        f"You are {role}. Work on exactly one assigned task at a time. "
+        "Use available tools when they materially help. Return a concise result. "
+        "Use 'SKQUAD_STATUS: done' only when the task is fully complete; use "
+        "'SKQUAD_STATUS: blocked' when you cannot proceed."
+    )
+
+
+def task_prompt(task: RuntimeTask) -> str:
+    description = task.description.strip() or "(no description)"
+    return f"Task: {task.title}\n\nDescription:\n{description}"
+
+
+def first_message(response: object) -> object:
+    choices = object_value(response, "choices") or []
+    if not choices:
+        raise RuntimeError("LLM response did not include choices")
+    first = choices[0]
+    message = object_value(first, "message")
+    if message is None:
+        raise RuntimeError("LLM response choice did not include a message")
+    return message
+
+
+def parse_tool_calls(message: object) -> list[ToolCall]:
+    calls = message_value(message, "tool_calls") or []
+    parsed: list[ToolCall] = []
+    for index, raw_call in enumerate(calls):
+        function = object_value(raw_call, "function") or {}
+        raw_arguments = object_value(function, "arguments") or "{}"
+        try:
+            arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+        except json.JSONDecodeError:
+            arguments = {"_raw": raw_arguments}
+        if not isinstance(arguments, Mapping):
+            arguments = {"value": arguments}
+        parsed.append(
+            ToolCall(
+                id=str(object_value(raw_call, "id") or f"tool-call-{index}"),
+                name=str(object_value(function, "name") or ""),
+                arguments=arguments,
+            )
+        )
+    return parsed
+
+
+def assistant_message(content: str, tool_calls: list[ToolCall]) -> dict[str, object]:
+    message: dict[str, object] = {"role": "assistant", "content": content}
+    if tool_calls:
+        message["tool_calls"] = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+            }
+            for call in tool_calls
+        ]
+    return message
+
+
+def status_from_content(content: str) -> str:
+    normalized = content.lower()
+    if "skquad_status: blocked" in normalized:
+        return "blocked"
+    if "skquad_status: done" in normalized:
+        return "done"
+    return "in-review"
+
+
+def message_value(message: object, key: str) -> object | None:
+    return object_value(message, key)
+
+
+def object_value(item: object, key: str) -> object | None:
+    if isinstance(item, Mapping):
+        return item.get(key)
+    return getattr(item, key, None)
+
+
 def poll_once(config: BootstrapConfig, client: ControlPlaneClient | None = None) -> RuntimeTask | None:
     status = bootstrap_status(config)
     if not status.ready:
@@ -264,12 +467,22 @@ def run_task_loop(
     sleeper: Callable[[float], None] = default_sleep,
 ) -> None:
     while not stop_requested(stop_event):
-        run_task_once(config, handler, client)
+        try:
+            run_task_once(config, handler, client)
+        except Exception:
+            LOGGER.exception("agent task loop iteration failed")
         sleeper(poll_interval_seconds)
 
 
 def stop_requested(stop_event: object | None) -> bool:
     return bool(stop_event is not None and getattr(stop_event, "is_set")())
+
+
+def env_bool(environ: Mapping[str, str], name: str, default: bool) -> bool:
+    value = environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def create_app(config: BootstrapConfig | None = None):
@@ -301,6 +514,17 @@ def create_app(config: BootstrapConfig | None = None):
 def main() -> None:
     import uvicorn
 
+    config = load_bootstrap_config()
+    if env_bool(os.environ, "SKQUAD_TASK_LOOP_ENABLED", True):
+        poll_interval = float(os.environ.get("SKQUAD_TASK_POLL_INTERVAL_SECONDS", "5"))
+        worker = threading.Thread(
+            target=run_task_loop,
+            args=(config, LiteLLMTaskHandler()),
+            kwargs={"poll_interval_seconds": poll_interval},
+            daemon=True,
+        )
+        worker.start()
+
     host = os.environ.get("SKQUAD_RUNTIME_HOST", "0.0.0.0")
     port = int(os.environ.get("SKQUAD_RUNTIME_PORT", "8080"))
-    uvicorn.run(create_app(), host=host, port=port)
+    uvicorn.run(create_app(config), host=host, port=port)

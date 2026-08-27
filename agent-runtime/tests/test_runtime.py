@@ -1,11 +1,14 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from skquad_runtime.runtime import (
     ControlPlaneClient,
+    LiteLLMTaskHandler,
     RuntimeTask,
     TaskResult,
+    ToolResult,
     bootstrap_status,
     create_app,
     load_bootstrap_config,
@@ -185,6 +188,71 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(client.completed, [])
             self.assertEqual(client.blocked, ["task-1"])
 
+    def test_litellm_handler_calls_gateway_and_returns_done_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                }
+            )
+            calls = []
+
+            def completion(**kwargs):
+                calls.append(kwargs)
+                return fake_completion("SKQUAD_STATUS: done\nImplemented.")
+
+            handler = LiteLLMTaskHandler(completion=completion)
+
+            result = handler.handle_task(fake_task("task-1"), config)
+
+            self.assertEqual(result.status, "done")
+            self.assertEqual(calls[0]["model"], "model-1")
+            self.assertEqual(calls[0]["api_base"], "http://gateway")
+            self.assertEqual(calls[0]["api_key"], "virtual-key")
+
+    def test_litellm_handler_invokes_plugin_tool_calls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                }
+            )
+            plugin = EchoPlugin()
+            calls = []
+
+            def completion(**kwargs):
+                calls.append(kwargs)
+                if len(calls) == 1:
+                    return fake_tool_completion("call-1", "echo", {"message": "hello"})
+                return fake_completion("SKQUAD_STATUS: done\nTool observed.")
+
+            handler = LiteLLMTaskHandler(plugins=[plugin], completion=completion)
+
+            result = handler.handle_task(fake_task("task-1"), config)
+
+            self.assertEqual(result.status, "done")
+            self.assertEqual(plugin.calls, [{"message": "hello"}])
+            self.assertEqual(calls[0]["tools"][0]["function"]["name"], "echo")
+            tool_messages = [item for item in calls[1]["messages"] if item["role"] == "tool"]
+            self.assertEqual(tool_messages[-1]["content"], "echo: hello")
+
 
 class FakeResponse:
     def __init__(self, status, payload):
@@ -237,6 +305,33 @@ class RaisingTaskHandler:
         raise RuntimeError("handler failed")
 
 
+class EchoPlugin:
+    name = "echo"
+
+    def __init__(self):
+        self.calls = []
+
+    def tools(self):
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "echo",
+                    "description": "Echo a message.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                    },
+                },
+            }
+        ]
+
+    def invoke(self, call, _config):
+        self.calls.append(dict(call.arguments))
+        return ToolResult(content=f"echo: {call.arguments['message']}")
+
+
 def fake_task(task_id, status="in-progress"):
     return RuntimeTask(
         id=task_id,
@@ -246,6 +341,32 @@ def fake_task(task_id, status="in-progress"):
         status=status,
         assignee_agent_id="agent-1",
     )
+
+
+def fake_completion(content):
+    return {"choices": [{"message": {"content": content}}]}
+
+
+def fake_tool_completion(call_id, name, arguments):
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
 
 
 def ready_config(tmp):

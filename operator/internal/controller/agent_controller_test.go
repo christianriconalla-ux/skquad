@@ -100,6 +100,9 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	if got := envValue(container.Env, "SKQUAD_LLM_GATEWAY_URL"); got != agent.Spec.LLMGatewayURL {
 		t.Fatalf("llm gateway url env = %q, want %q", got, agent.Spec.LLMGatewayURL)
 	}
+	if got := envValue(container.Env, "SKQUAD_TASK_LOOP_ENABLED"); got != "true" {
+		t.Fatalf("task loop enabled env = %q, want true", got)
+	}
 	if got := deployment.Spec.Template.Labels["skquad.io/agent-id"]; got != agent.Spec.AgentID {
 		t.Fatalf("agent label = %q, want %q", got, agent.Spec.AgentID)
 	}

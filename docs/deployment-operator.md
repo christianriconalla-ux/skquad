@@ -72,7 +72,7 @@ spec:
   agentId: <uuid>
   squadId: <uuid>
   role: "coder"
-  defaultModel: "gpt-4o"
+  defaultProviderId: "provider-or-model-alias"
   image: skquad/agent-runtime:<tag>
   credentialSecret: agent-<id>-credential
   virtualKeySecret: agent-<id>-virtual-key
@@ -124,7 +124,8 @@ When the operator sees an `Agent` CR:
      warm until `idleTimeout` has elapsed, then scale to `0`.
    - **Secrets:** mount the agent's credential + LLM gateway virtual key when
      the Agent CR includes Kubernetes Secret names.
-   - **Env:** agent config (role, default model, permissions, endpoints).
+   - **Env:** agent config (role, default provider/model hint, permissions,
+     endpoints, and `SKQUAD_TASK_LOOP_ENABLED=true`).
    - **Probes:** `/healthz`, `/readyz`.
    - **Resources:** requests/limits (configurable).
 2. **React to the control plane's desired activity signal.**
