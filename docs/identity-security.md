@@ -122,8 +122,8 @@ Squad owner → "Create agent identity" (one-click)
 - **Rotation:** the owner can rotate an agent's credential / virtual key without
   re-creating the agent. The old key is revoked on rotation.
 - **Storage:** secrets live in K8s (optionally backed by an external secrets
-  manager). The control plane never returns raw secrets to clients — only
-  references.
+  manager). The control plane stores only a one-way verifier hash for the agent
+  credential and never returns raw secrets to clients — only references.
 - **Least privilege:** each agent's credential is scoped to that agent; the
   LLM gateway virtual key is scoped to the agent's permitted models.
 
@@ -163,6 +163,12 @@ audit_log(
 | User → agent (chat) | API server | Access grant |
 | Agent → agent (cross-squad) | Control plane / message queue | Access grant |
 | All significant actions | Control plane | Audit log |
+
+Current implementation note: when Kubernetes CR writing is enabled, the control
+plane writes the generated agent credential into a Kubernetes Secret named by
+the `credential_ref`, and the operator mounts that Secret into the agent pod.
+This requires the API server service account to have Secret write/delete access
+for squad namespaces.
 
 ---
 

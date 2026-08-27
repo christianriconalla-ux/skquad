@@ -40,6 +40,7 @@ CREATE TABLE agent_identities (
     agent_id      uuid NOT NULL,        -- set when attached to an agent
     subject       text NOT NULL UNIQUE, -- stable agent principal
     credential_ref text,                -- K8s secret ref
+    credential_hash text,               -- one-way runtime auth verifier
     virtual_key_ref text,               -- LLM gateway virtual key ref
     created_by    uuid NOT NULL REFERENCES users(id),
     status        text NOT NULL DEFAULT 'active'

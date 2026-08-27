@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -125,6 +126,38 @@ func (w *CRWriter) DeleteAgent(ctx context.Context, agent *domain.Agent) error {
 	return w.delete(ctx, "agents", agentCRName(agent.ID))
 }
 
+func (w *CRWriter) WriteAgentCredential(ctx context.Context, credentialRef string, agentID string, token string) error {
+	namespace, name := secretTargetFromRef(credentialRef)
+	if namespace == "" || name == "" {
+		return fmt.Errorf("kube: invalid agent credential ref %q", credentialRef)
+	}
+	body := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+			"labels": map[string]string{
+				"app.kubernetes.io/managed-by": "skquad-control-plane",
+				"skquad.io/agent-id":           agentID,
+			},
+		},
+		"type": "Opaque",
+		"data": map[string]string{
+			"token": base64.StdEncoding.EncodeToString([]byte(token)),
+		},
+	}
+	return w.applyCore(ctx, "secrets", namespace, name, body)
+}
+
+func (w *CRWriter) DeleteAgentCredential(ctx context.Context, credentialRef string) error {
+	namespace, name := secretTargetFromRef(credentialRef)
+	if namespace == "" || name == "" {
+		return nil
+	}
+	return w.deleteCore(ctx, "secrets", namespace, name)
+}
+
 func (w *CRWriter) apply(ctx context.Context, plural, name string, body map[string]any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -150,8 +183,55 @@ func (w *CRWriter) apply(ctx context.Context, plural, name string, body map[stri
 	return nil
 }
 
+func (w *CRWriter) applyCore(ctx context.Context, plural, namespace, name string, body map[string]any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("kube: marshal %s/%s: %w", plural, name, err)
+	}
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/%s/%s?fieldManager=skquad-control-plane&force=true",
+		w.baseURL, namespace, plural, name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("kube: build apply request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+w.token)
+	req.Header.Set("Content-Type", "application/apply-patch+yaml")
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("kube: apply %s/%s: %w", plural, name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("kube: apply %s/%s: %s: %s", plural, name, resp.Status, responseSnippet(resp.Body))
+	}
+	return nil
+}
+
 func (w *CRWriter) delete(ctx context.Context, plural, name string) error {
 	url := fmt.Sprintf("%s/apis/%s/namespaces/%s/%s/%s", w.baseURL, w.groupVersion, w.namespace, plural, name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("kube: build delete request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+w.token)
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("kube: delete %s/%s: %w", plural, name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("kube: delete %s/%s: %s: %s", plural, name, resp.Status, responseSnippet(resp.Body))
+	}
+	return nil
+}
+
+func (w *CRWriter) deleteCore(ctx context.Context, plural, namespace, name string) error {
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/%s/%s", w.baseURL, namespace, plural, name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return fmt.Errorf("kube: build delete request: %w", err)
@@ -212,4 +292,16 @@ func secretNameFromRef(ref string) string {
 		return ""
 	}
 	return ref
+}
+
+func secretTargetFromRef(ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if !strings.HasPrefix(ref, "k8s://") {
+		return "", ""
+	}
+	parts := strings.Split(strings.TrimPrefix(ref, "k8s://"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", ""
+	}
+	return parts[0], parts[1]
 }

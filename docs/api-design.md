@@ -71,6 +71,10 @@
 | `GET` | `/api/v1/agents/:id/permissions` | List the agent's resource permissions. |
 | `PUT` | `/api/v1/agents/:id/permissions` | Set the agent's resource permissions (owner). |
 
+Identity responses expose credential and virtual-key references only. Raw agent
+credential material is written to the configured Secret backend and is not
+returned by the API.
+
 ---
 
 ## 6. Boards & Tasks

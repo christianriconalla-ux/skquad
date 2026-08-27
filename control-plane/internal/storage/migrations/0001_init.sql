@@ -60,11 +60,13 @@ CREATE TABLE IF NOT EXISTS agent_identities (
     id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id       uuid NOT NULL UNIQUE REFERENCES agents(id) ON DELETE CASCADE,
     credential_ref text NOT NULL,
+    credential_hash text NOT NULL DEFAULT '',
     virtual_key_ref text,
     created_by     uuid NOT NULL REFERENCES users(id),
     created_at     timestamptz NOT NULL DEFAULT now(),
     rotated_at     timestamptz
 );
+ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS credential_hash text NOT NULL DEFAULT '';
 
 -- ---------------------------------------------------------------------------
 -- Kanban boards (one per squad)

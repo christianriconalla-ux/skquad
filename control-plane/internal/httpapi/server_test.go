@@ -414,7 +414,8 @@ func TestAgentPermissionsSetAndList(t *testing.T) {
 func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	t.Parallel()
 
-	handler := New(testConfig(), storage.NewMemoryStore())
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
 
 	var squad domain.Squad
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
@@ -428,6 +429,8 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 
 	var identity domain.AgentIdentity
 	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+	require.NotEmpty(t, credential)
 
 	var task domain.Task
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
@@ -436,17 +439,17 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	}, http.StatusCreated, &task)
 
 	var listed []domain.Task
-	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodGet, "/api/v1/agents/me/tasks", nil, http.StatusOK, &listed)
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodGet, "/api/v1/agents/me/tasks", nil, http.StatusOK, &listed)
 	require.Len(t, listed, 1)
 	require.Equal(t, task.ID, listed[0].ID)
 
 	var claimed domain.Task
-	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
 	require.Equal(t, task.ID, claimed.ID)
 	require.Equal(t, domain.TaskInProgress, claimed.Status)
 
 	var claimedAgain domain.Task
-	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimedAgain)
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimedAgain)
 	require.Equal(t, claimed.ID, claimedAgain.ID)
 
 	var currentAgent domain.Agent
@@ -454,12 +457,12 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	require.Equal(t, domain.AgentBusy, currentAgent.Status)
 
 	var completed domain.Task
-	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]string{
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]string{
 		"status": string(domain.TaskDone),
 	}, http.StatusOK, &completed)
 	require.Equal(t, domain.TaskDone, completed.Status)
 
-	doAgentJSONNoBody(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusNoContent)
+	doAgentJSONNoBody(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusNoContent)
 
 	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID, nil, http.StatusOK, &currentAgent)
 	require.Equal(t, domain.AgentIdle, currentAgent.Status)
@@ -473,7 +476,8 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 func TestAgentRuntimeAuthRejectsInvalidCredential(t *testing.T) {
 	t.Parallel()
 
-	handler := New(testConfig(), storage.NewMemoryStore())
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
 
 	var squad domain.Squad
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
@@ -492,8 +496,11 @@ func TestAgentRuntimeAuthRejectsInvalidCredential(t *testing.T) {
 	doAgentJSON(t, handler, agent.ID, "wrong", http.MethodGet, "/api/v1/agents/me/tasks", nil, http.StatusUnauthorized, &body)
 	require.Equal(t, "unauthorized", body["error"]["code"])
 
+	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodGet, "/api/v1/agents/me/tasks", nil, http.StatusUnauthorized, &body)
+	require.Equal(t, "unauthorized", body["error"]["code"])
+
 	var currentAgent domain.Agent
-	doAgentJSON(t, handler, agent.ID, identity.VirtualKeyRef, http.MethodPost, "/api/v1/agents/me/heartbeat", map[string]string{
+	doAgentJSON(t, handler, agent.ID, crWriter.credentialTokens[identity.CredentialRef], http.MethodPost, "/api/v1/agents/me/heartbeat", map[string]string{
 		"status": string(domain.AgentError),
 	}, http.StatusOK, &currentAgent)
 	require.Equal(t, domain.AgentError, currentAgent.Status)
@@ -605,7 +612,8 @@ func auditActions(entries []domain.AuditEntry) []string {
 }
 
 type fakeCRWriter struct {
-	ops []string
+	ops              []string
+	credentialTokens map[string]string
 }
 
 func (f *fakeCRWriter) UpsertSquad(_ context.Context, squad *domain.Squad) error {
@@ -625,5 +633,20 @@ func (f *fakeCRWriter) UpsertAgent(_ context.Context, agent *domain.Agent, _ *do
 
 func (f *fakeCRWriter) DeleteAgent(_ context.Context, agent *domain.Agent) error {
 	f.ops = append(f.ops, "delete-agent:"+agent.ID)
+	return nil
+}
+
+func (f *fakeCRWriter) WriteAgentCredential(_ context.Context, credentialRef string, _ string, token string) error {
+	if f.credentialTokens == nil {
+		f.credentialTokens = map[string]string{}
+	}
+	f.credentialTokens[credentialRef] = token
+	return nil
+}
+
+func (f *fakeCRWriter) DeleteAgentCredential(_ context.Context, credentialRef string) error {
+	if f.credentialTokens != nil {
+		delete(f.credentialTokens, credentialRef)
+	}
 	return nil
 }

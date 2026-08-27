@@ -344,10 +344,10 @@ func (p *PostgresStore) CreateAgentIdentity(ctx context.Context, i *domain.Agent
 	defer tx.Rollback(ctx)
 
 	row := tx.QueryRow(ctx, `
-		INSERT INTO agent_identities (agent_id, credential_ref, virtual_key_ref, created_by)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id::text, agent_id::text, credential_ref, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
-	`, i.AgentID, i.CredentialRef, nullableText(i.VirtualKeyRef), i.CreatedBy)
+		INSERT INTO agent_identities (agent_id, credential_ref, credential_hash, virtual_key_ref, created_by)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id::text, agent_id::text, credential_ref, credential_hash, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
+	`, i.AgentID, i.CredentialRef, i.CredentialHash, nullableText(i.VirtualKeyRef), i.CreatedBy)
 	created, err := scanAgentIdentity(row)
 	if err != nil {
 		return nil, err
@@ -367,21 +367,22 @@ func (p *PostgresStore) CreateAgentIdentity(ctx context.Context, i *domain.Agent
 
 func (p *PostgresStore) GetAgentIdentity(ctx context.Context, agentID string) (*domain.AgentIdentity, error) {
 	row := p.pool.QueryRow(ctx, `
-		SELECT id::text, agent_id::text, credential_ref, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
+		SELECT id::text, agent_id::text, credential_ref, credential_hash, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
 		FROM agent_identities
 		WHERE agent_id = $1
 	`, agentID)
 	return scanAgentIdentity(row)
 }
 
-func (p *PostgresStore) RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string) (*domain.AgentIdentity, error) {
+func (p *PostgresStore) RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string, credentialHash string) (*domain.AgentIdentity, error) {
 	row := p.pool.QueryRow(ctx, `
 		UPDATE agent_identities
 		SET credential_ref = $2,
+		    credential_hash = $3,
 		    rotated_at = now()
 		WHERE agent_id = $1
-		RETURNING id::text, agent_id::text, credential_ref, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
-	`, agentID, credentialRef)
+		RETURNING id::text, agent_id::text, credential_ref, credential_hash, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
+	`, agentID, credentialRef, credentialHash)
 	return scanAgentIdentity(row)
 }
 
@@ -1032,6 +1033,7 @@ func scanAgentIdentity(row scanner) (*domain.AgentIdentity, error) {
 		&i.ID,
 		&i.AgentID,
 		&i.CredentialRef,
+		&i.CredentialHash,
 		&i.VirtualKeyRef,
 		&i.CreatedBy,
 		&i.CreatedAt,

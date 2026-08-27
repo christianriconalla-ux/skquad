@@ -53,7 +53,8 @@ Implemented slice:
 - `GET /api/v1/auth/me` with dev-mode principal provisioning
 - Squad CRUD under `/api/v1/squads`
 - Agent CRUD for squads
-- Agent identity create/rotate endpoints with generated secret/key references
+- Agent identity create/rotate endpoints with generated credential Secret
+  material, stored verifier hashes, and public secret/key references
 - Agent registry permission list/set endpoints
 - Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
   task start/complete/block, and status heartbeats
@@ -74,7 +75,8 @@ Implemented slice:
 - OIDC bearer JWT validation with first-login user provisioning
 - Owner/admin/granted-user read authorization for squad resources
 - Platform-admin authorization for registry writes
-- Agent credential auth for runtime endpoints using current identity references
+- Agent credential auth for runtime endpoints using one-way credential verifier
+  hashes, with credential-ref matching retained only for old rows without hashes
 
-Next slices are real agent credential secret material, the full runtime task
-execution loop, and operator scale-up from pending assigned tasks.
+Next slices are the full runtime task execution loop and operator scale-up from
+pending assigned tasks.

@@ -18,7 +18,8 @@ The current chart installs:
 - CRDs for `Squad` and `Agent`
 - Operator namespace, ServiceAccount, ClusterRole, ClusterRoleBinding, and
   Deployment
-- API server ServiceAccount, namespaced CR-writer RBAC, Deployment, and Service
+- API server ServiceAccount, namespaced CR-writer RBAC, cluster-scoped
+  agent-credential Secret writer RBAC, Deployment, and Service
 - LLM gateway ConfigMap, Deployment, and Service
 - Web Deployment and Service
 - Postgres Secret, Service, and StatefulSet for local/dev installs

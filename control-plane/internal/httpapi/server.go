@@ -3,7 +3,10 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +58,8 @@ type CRWriter interface {
 	DeleteSquad(ctx context.Context, squad *domain.Squad) error
 	UpsertAgent(ctx context.Context, agent *domain.Agent, identity *domain.AgentIdentity) error
 	DeleteAgent(ctx context.Context, agent *domain.Agent) error
+	WriteAgentCredential(ctx context.Context, credentialRef string, agentID string, token string) error
+	DeleteAgentCredential(ctx context.Context, credentialRef string) error
 }
 
 // New returns an HTTP handler for the control-plane API.
@@ -163,6 +168,10 @@ func (noopCRWriter) UpsertAgent(context.Context, *domain.Agent, *domain.AgentIde
 	return nil
 }
 func (noopCRWriter) DeleteAgent(context.Context, *domain.Agent) error { return nil }
+func (noopCRWriter) WriteAgentCredential(context.Context, string, string, string) error {
+	return nil
+}
+func (noopCRWriter) DeleteAgentCredential(context.Context, string) error { return nil }
 
 type principalKey struct{}
 type agentPrincipalKey struct{}
@@ -935,13 +944,25 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	u := currentUser(r.Context())
 	identity := &domain.AgentIdentity{
-		AgentID:       agent.ID,
-		CredentialRef: generatedCredentialRef(squad.Namespace, agent.ID),
-		VirtualKeyRef: generatedVirtualKeyRef(agent.ID),
-		CreatedBy:     u.ID,
+		AgentID:        agent.ID,
+		CredentialRef:  generatedCredentialRef(squad.Namespace, agent.ID),
+		CredentialHash: "",
+		VirtualKeyRef:  generatedVirtualKeyRef(agent.ID),
+		CreatedBy:      u.ID,
+	}
+	credential, err := generateCredential()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to generate agent credential")
+		return
+	}
+	identity.CredentialHash = hashCredential(credential)
+	if err := s.crWriter.WriteAgentCredential(r.Context(), identity.CredentialRef, agent.ID, credential); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent credential secret")
+		return
 	}
 	created, err := s.store.CreateAgentIdentity(r.Context(), identity)
 	if err != nil {
+		_ = s.crWriter.DeleteAgentCredential(r.Context(), identity.CredentialRef)
 		writeStorageError(w, err)
 		return
 	}
@@ -963,11 +984,28 @@ func (s *Server) rotateAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	identity, err := s.store.RotateAgentIdentity(r.Context(), agent.ID, generatedCredentialRef(squad.Namespace, agent.ID))
+	existing, err := s.store.GetAgentIdentity(r.Context(), agent.ID)
 	if err != nil {
 		writeStorageError(w, err)
 		return
 	}
+	credential, err := generateCredential()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to generate agent credential")
+		return
+	}
+	credentialRef := generatedCredentialRef(squad.Namespace, agent.ID)
+	if err := s.crWriter.WriteAgentCredential(r.Context(), credentialRef, agent.ID, credential); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent credential secret")
+		return
+	}
+	identity, err := s.store.RotateAgentIdentity(r.Context(), agent.ID, credentialRef, hashCredential(credential))
+	if err != nil {
+		_ = s.crWriter.DeleteAgentCredential(r.Context(), credentialRef)
+		writeStorageError(w, err)
+		return
+	}
+	_ = s.crWriter.DeleteAgentCredential(r.Context(), existing.CredentialRef)
 	if err := s.crWriter.UpsertAgent(r.Context(), agent, identity); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
 		return
@@ -1679,8 +1717,21 @@ func matchesAgentCredential(token string, identity *domain.AgentIdentity) bool {
 	if token == "" || identity == nil {
 		return false
 	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(identity.CredentialRef)) == 1 {
-		return true
+	if identity.CredentialHash != "" {
+		return subtle.ConstantTimeCompare([]byte(hashCredential(token)), []byte(identity.CredentialHash)) == 1
 	}
-	return identity.VirtualKeyRef != "" && subtle.ConstantTimeCompare([]byte(token), []byte(identity.VirtualKeyRef)) == 1
+	return subtle.ConstantTimeCompare([]byte(token), []byte(identity.CredentialRef)) == 1
+}
+
+func generateCredential() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func hashCredential(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return base64.RawStdEncoding.EncodeToString(sum[:])
 }

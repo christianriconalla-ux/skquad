@@ -56,37 +56,38 @@ type Squad struct {
 type AgentStatus string
 
 const (
-	AgentIdle   AgentStatus = "idle"
-	AgentBusy   AgentStatus = "busy"
-	AgentError  AgentStatus = "error"
+	AgentIdle  AgentStatus = "idle"
+	AgentBusy  AgentStatus = "busy"
+	AgentError AgentStatus = "error"
 )
 
 // Agent is a member of a squad. It runs in its own pod and has its own
 // identity, credentials, and permission set.
 type Agent struct {
-	ID               string          `json:"id"`
-	SquadID          string          `json:"squad_id"`
-	Name             string          `json:"name"`
-	Role             string          `json:"role"`
-	IdentityID       string          `json:"identity_id,omitempty"`
-	DefaultProvider  string          `json:"default_provider_id,omitempty"`
-	Permissions      json.RawMessage `json:"permissions"`
-	IdleTimeoutSec   int             `json:"idle_timeout_sec"`
-	Status           AgentStatus     `json:"status"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	ID              string          `json:"id"`
+	SquadID         string          `json:"squad_id"`
+	Name            string          `json:"name"`
+	Role            string          `json:"role"`
+	IdentityID      string          `json:"identity_id,omitempty"`
+	DefaultProvider string          `json:"default_provider_id,omitempty"`
+	Permissions     json.RawMessage `json:"permissions"`
+	IdleTimeoutSec  int             `json:"idle_timeout_sec"`
+	Status          AgentStatus     `json:"status"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 // AgentIdentity is the owner-created identity + credential reference for an
 // agent (see ADR-0007 and docs/identity-security.md).
 type AgentIdentity struct {
-	ID           string    `json:"id"`
-	AgentID      string    `json:"agent_id"`
-	CredentialRef string   `json:"credential_ref"`
-	VirtualKeyRef string   `json:"virtual_key_ref,omitempty"`
-	CreatedBy    string    `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
-	RotatedAt    time.Time `json:"rotated_at,omitempty"`
+	ID             string    `json:"id"`
+	AgentID        string    `json:"agent_id"`
+	CredentialRef  string    `json:"credential_ref"`
+	CredentialHash string    `json:"-"`
+	VirtualKeyRef  string    `json:"virtual_key_ref,omitempty"`
+	CreatedBy      string    `json:"created_by"`
+	CreatedAt      time.Time `json:"created_at"`
+	RotatedAt      time.Time `json:"rotated_at,omitempty"`
 }
 
 // TaskStatus is a Kanban column.
@@ -213,16 +214,16 @@ type AccessGrant struct {
 
 // MeteringEvent records token usage for an agent (and squad) LLM call.
 type MeteringEvent struct {
-	ID         string    `json:"id"`
-	AgentID    string    `json:"agent_id"`
-	SquadID    string    `json:"squad_id"`
-	ProviderID string    `json:"provider_id"`
-	Model      string    `json:"model"`
-	InputTokens int      `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	Cost       float64   `json:"cost"`
-	Currency   string    `json:"currency"`
-	Timestamp  time.Time `json:"timestamp"`
+	ID           string    `json:"id"`
+	AgentID      string    `json:"agent_id"`
+	SquadID      string    `json:"squad_id"`
+	ProviderID   string    `json:"provider_id"`
+	Model        string    `json:"model"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	Cost         float64   `json:"cost"`
+	Currency     string    `json:"currency"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // AuditEntry is an append-only record of a significant action.

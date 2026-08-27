@@ -367,7 +367,7 @@ func (m *MemoryStore) GetAgentIdentity(_ context.Context, agentID string) (*doma
 	return cloneAgentIdentity(m.identities[identityID]), nil
 }
 
-func (m *MemoryStore) RotateAgentIdentity(_ context.Context, agentID string, credentialRef string) (*domain.AgentIdentity, error) {
+func (m *MemoryStore) RotateAgentIdentity(_ context.Context, agentID string, credentialRef string, credentialHash string) (*domain.AgentIdentity, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	identityID, ok := m.identityAgent[agentID]
@@ -376,6 +376,7 @@ func (m *MemoryStore) RotateAgentIdentity(_ context.Context, agentID string, cre
 	}
 	identity := m.identities[identityID]
 	identity.CredentialRef = credentialRef
+	identity.CredentialHash = credentialHash
 	identity.RotatedAt = time.Now().UTC()
 	return cloneAgentIdentity(identity), nil
 }
