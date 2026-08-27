@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ from skquad_runtime.runtime import (
     bootstrap_status,
     create_app,
     load_bootstrap_config,
+    load_runtime_plugins,
     poll_once,
     read_secret_value,
     run_task_once,
@@ -42,6 +44,8 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(config.role, "coder")
         self.assertEqual(config.default_provider_id, "provider-1")
         self.assertEqual(config.default_model, "openai/gpt-4o-mini")
+        self.assertEqual(config.plugin_modules, ())
+        self.assertEqual(config.enabled_plugins, ())
         self.assertEqual(config.agent_credential_path, Path("/tmp/credentials/agent"))
         self.assertEqual(config.virtual_key_path, Path("/tmp/credentials/gateway"))
         self.assertTrue(config.task_loop_enabled)
@@ -402,6 +406,133 @@ class RuntimeBootstrapTest(unittest.TestCase):
             tool_messages = [item for item in calls[1]["messages"] if item["role"] == "tool"]
             self.assertEqual(tool_messages[-1]["content"], "echo: hello")
 
+    def test_load_runtime_plugins_from_module_factory_and_enabled_filter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module_dir = Path(tmp)
+            (module_dir / "skquad_test_plugins.py").write_text(
+                """
+class EchoPlugin:
+    name = "echo"
+    def tools(self):
+        return []
+    def invoke(self, call, config):
+        return "ok"
+
+class SkipPlugin:
+    name = "skip"
+    def tools(self):
+        return []
+    def invoke(self, call, config):
+        return "skip"
+
+def create_plugin():
+    return EchoPlugin()
+
+skip_plugin = SkipPlugin()
+""",
+                encoding="utf-8",
+            )
+            sys.path.insert(0, str(module_dir))
+            try:
+                config = load_bootstrap_config(
+                    {
+                        "SKQUAD_AGENT_ID": "agent-1",
+                        "SKQUAD_SQUAD_ID": "squad-1",
+                        "SKQUAD_TASK_LOOP_ENABLED": "false",
+                        "SKQUAD_PLUGIN_MODULES": "skquad_test_plugins, skquad_test_plugins:skip_plugin",
+                        "SKQUAD_ENABLED_PLUGINS": "echo",
+                    }
+                )
+
+                plugins = load_runtime_plugins(config)
+            finally:
+                sys.path.remove(str(module_dir))
+                sys.modules.pop("skquad_test_plugins", None)
+
+            self.assertEqual([plugin.name for plugin in plugins], ["echo"])
+
+    def test_load_runtime_plugins_rejects_missing_enabled_plugin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module_dir = Path(tmp)
+            (module_dir / "only_echo.py").write_text(
+                """
+class Plugin:
+    name = "echo"
+    def tools(self):
+        return []
+    def invoke(self, call, config):
+        return "ok"
+""",
+                encoding="utf-8",
+            )
+            sys.path.insert(0, str(module_dir))
+            try:
+                config = load_bootstrap_config(
+                    {
+                        "SKQUAD_AGENT_ID": "agent-1",
+                        "SKQUAD_SQUAD_ID": "squad-1",
+                        "SKQUAD_TASK_LOOP_ENABLED": "false",
+                        "SKQUAD_PLUGIN_MODULES": "only_echo",
+                        "SKQUAD_ENABLED_PLUGINS": "missing",
+                    }
+                )
+
+                with self.assertRaisesRegex(RuntimeError, "enabled plugins were not loaded: missing"):
+                    load_runtime_plugins(config)
+            finally:
+                sys.path.remove(str(module_dir))
+                sys.modules.pop("only_echo", None)
+
+    def test_litellm_handler_blocks_unknown_tool_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
+                }
+            )
+
+            handler = LiteLLMTaskHandler(
+                completion=lambda **_kwargs: fake_tool_completion("call-1", "disabled_tool", {}),
+                discover_resources=False,
+            )
+
+            result = handler.handle_task(fake_task("task-1"), config)
+
+            self.assertEqual(result.status, "blocked")
+            self.assertIn("disabled_tool", result.summary)
+
+    def test_litellm_handler_blocks_plugin_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
+                }
+            )
+            handler = LiteLLMTaskHandler(
+                plugins=[FailingPlugin()],
+                completion=lambda **_kwargs: fake_tool_completion("call-1", "fail", {}),
+                discover_resources=False,
+            )
+
+            result = handler.handle_task(fake_task("task-1"), config)
+
+            self.assertEqual(result.status, "blocked")
+            self.assertIn("failed", result.summary)
+
 
 class FakeResponse:
     def __init__(self, status, payload):
@@ -479,6 +610,25 @@ class EchoPlugin:
     def invoke(self, call, _config):
         self.calls.append(dict(call.arguments))
         return ToolResult(content=f"echo: {call.arguments['message']}")
+
+
+class FailingPlugin:
+    name = "fail"
+
+    def tools(self):
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "fail",
+                    "description": "Fail.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+    def invoke(self, _call, _config):
+        raise RuntimeError("plugin failed")
 
 
 def fake_task(task_id, status="in-progress"):

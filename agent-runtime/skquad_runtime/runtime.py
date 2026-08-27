@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import json
 import inspect
+import importlib
 import logging
 import threading
 from dataclasses import dataclass
@@ -34,6 +35,8 @@ class BootstrapConfig:
     control_plane_url: str
     llm_gateway_url: str
     task_loop_enabled: bool
+    plugin_modules: tuple[str, ...]
+    enabled_plugins: tuple[str, ...]
 
     @property
     def missing_required(self) -> list[str]:
@@ -137,6 +140,8 @@ def load_bootstrap_config(environ: Mapping[str, str] | None = None) -> Bootstrap
         control_plane_url=env.get("SKQUAD_CONTROL_PLANE_URL", ""),
         llm_gateway_url=env.get("SKQUAD_LLM_GATEWAY_URL", ""),
         task_loop_enabled=env_bool(env, "SKQUAD_TASK_LOOP_ENABLED", True),
+        plugin_modules=parse_csv(env.get("SKQUAD_PLUGIN_MODULES", "")),
+        enabled_plugins=parse_csv(env.get("SKQUAD_ENABLED_PLUGINS", "")),
     )
 
 
@@ -337,6 +342,8 @@ class LiteLLMTaskHandler:
                 return TaskResult(status=status_from_content(content), summary=content)
             for call in tool_calls:
                 result = self.invoke_tool(call, config)
+                if not result.ok:
+                    return TaskResult(status="blocked", summary=result.content)
                 messages.append(
                     {
                         "role": "tool",
@@ -386,6 +393,83 @@ class LiteLLMTaskHandler:
             return ToolResult(content=str(result))
         except Exception as exc:
             return ToolResult(content=f"tool {call.name!r} failed: {exc}", ok=False)
+
+
+def load_runtime_plugins(
+    config: BootstrapConfig,
+    importer: Callable[[str], object] = importlib.import_module,
+) -> list[RuntimePlugin]:
+    loaded: list[RuntimePlugin] = []
+    enabled = set(config.enabled_plugins)
+    for spec in config.plugin_modules:
+        plugin = load_runtime_plugin(spec, importer)
+        if enabled and plugin.name not in enabled:
+            continue
+        loaded.append(plugin)
+    if enabled:
+        found = {plugin.name for plugin in loaded}
+        missing = sorted(enabled - found)
+        if missing:
+            raise RuntimeError("enabled plugins were not loaded: " + ", ".join(missing))
+    return loaded
+
+
+def load_runtime_plugin(
+    spec: str,
+    importer: Callable[[str], object] = importlib.import_module,
+) -> RuntimePlugin:
+    module_name, attr = plugin_spec_parts(spec)
+    module = importer(module_name)
+    candidate = plugin_candidate(module, attr)
+    plugin = instantiate_plugin(candidate)
+    validate_runtime_plugin(plugin, spec)
+    return plugin
+
+
+def plugin_spec_parts(spec: str) -> tuple[str, str]:
+    module_name, sep, attr = spec.partition(":")
+    module_name = module_name.strip()
+    attr = attr.strip() if sep else ""
+    if not module_name:
+        raise RuntimeError("plugin module spec must include a module name")
+    return module_name, attr
+
+
+def plugin_candidate(module: object, attr: str) -> object:
+    if attr:
+        if not hasattr(module, attr):
+            raise RuntimeError(f"plugin module {module_name(module)!r} has no attribute {attr!r}")
+        return getattr(module, attr)
+    for name in ("create_plugin", "plugin", "Plugin"):
+        if hasattr(module, name):
+            return getattr(module, name)
+    raise RuntimeError(
+        f"plugin module {module_name(module)!r} must expose create_plugin, plugin, Plugin, or an explicit attribute"
+    )
+
+
+def instantiate_plugin(candidate: object) -> RuntimePlugin:
+    if inspect.isclass(candidate) or (callable(candidate) and not looks_like_plugin(candidate)):
+        candidate = candidate()
+    return candidate  # type: ignore[return-value]
+
+
+def looks_like_plugin(candidate: object) -> bool:
+    return hasattr(candidate, "name") and hasattr(candidate, "tools") and hasattr(candidate, "invoke")
+
+
+def validate_runtime_plugin(plugin: object, spec: str) -> None:
+    name = getattr(plugin, "name", "")
+    if not isinstance(name, str) or not name.strip():
+        raise RuntimeError(f"plugin {spec!r} must expose a non-empty name")
+    if not callable(getattr(plugin, "tools", None)):
+        raise RuntimeError(f"plugin {name!r} must expose tools()")
+    if not callable(getattr(plugin, "invoke", None)):
+        raise RuntimeError(f"plugin {name!r} must expose invoke()")
+
+
+def module_name(module: object) -> str:
+    return str(getattr(module, "__name__", module.__class__.__name__))
 
 
 def system_prompt(config: BootstrapConfig, resources: list[RuntimeResource] | None = None) -> str:
@@ -559,6 +643,10 @@ def env_bool(environ: Mapping[str, str], name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def parse_csv(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def create_app(config: BootstrapConfig | None = None):
     from fastapi import FastAPI, Response, status
 
@@ -591,10 +679,11 @@ def main() -> None:
 
     config = load_bootstrap_config()
     if config.task_loop_enabled:
+        plugins = load_runtime_plugins(config)
         poll_interval = float(os.environ.get("SKQUAD_TASK_POLL_INTERVAL_SECONDS", "5"))
         worker = threading.Thread(
             target=run_task_loop,
-            args=(config, LiteLLMTaskHandler()),
+            args=(config, LiteLLMTaskHandler(plugins=plugins)),
             kwargs={"poll_interval_seconds": poll_interval},
             daemon=True,
         )

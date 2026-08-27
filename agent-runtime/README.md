@@ -35,6 +35,9 @@ agent-runtime/
   explicit `SKQUAD_DEFAULT_MODEL` model alias, exposes
   registered plugin tool schemas, discovers granted active resources, and
   invokes loaded plugin tool calls.
+- Loads plugin modules with importlib from `SKQUAD_PLUGIN_MODULES`, optionally
+  filters them with `SKQUAD_ENABLED_PLUGINS`, and blocks tasks predictably for
+  unknown tool calls or plugin invocation failures.
 - Starts the task loop in the runtime process when `SKQUAD_TASK_LOOP_ENABLED`
   is true (the operator sets it true for agent pods) while still serving
   `/healthz` and `/readyz`.
@@ -43,5 +46,5 @@ agent-runtime/
   must be present.
 - Provides the `skquad-agent-runtime` console script.
 
-Inbox draining, dynamic plugin package loading, and memory store integration
-are still upcoming slices.
+Inbox draining, automatic registry package installation, and memory store
+integration are still upcoming slices.

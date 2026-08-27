@@ -166,8 +166,12 @@ class Plugin(Protocol):
   (knowledge bases, git/Jira/Confluence workspaces). They use the agent's
   permissions + credentials.
 
-The runtime loads the plugins the agent is **permitted** to use (from its
-permission set) and exposes their tools/skills to the LLM.
+The runtime loads configured plugin modules and exposes their tools to the LLM.
+Current loading is importlib-based: `SKQUAD_PLUGIN_MODULES` names modules or
+module attributes, and `SKQUAD_ENABLED_PLUGINS` optionally filters by plugin
+name. Permission-scoped registry discovery already informs task context;
+automatic conversion from granted registry descriptors to import specs is a
+later packaging/registry slice.
 
 ---
 
@@ -237,6 +241,8 @@ variables:
 | `SKQUAD_CONTROL_PLANE_URL` | Control-plane URL for task claim/status/heartbeat calls. |
 | `SKQUAD_LLM_GATEWAY_URL` | LLM gateway URL for model calls. |
 | `SKQUAD_TASK_LOOP_ENABLED` | Starts the runtime task loop when true. Defaults to true in the process entrypoint and is set true by the operator. |
+| `SKQUAD_PLUGIN_MODULES` | Comma-separated plugin import specs (`module`, `module:factory`, `module:plugin`, or `module:Plugin`). |
+| `SKQUAD_ENABLED_PLUGINS` | Optional comma-separated allowlist of loaded plugin names. Missing enabled names fail startup. |
 
 The runtime readiness check reports only booleans for secret presence; it never
 returns raw credential values. When the task loop is enabled, `/readyz` requires
@@ -249,8 +255,9 @@ claim/heartbeat primitive, a handler-driven `run_task_once` execution
 primitive, a default LiteLLM/plugin handler, and permission-scoped runtime
 resource discovery. The runtime process starts the task loop when
 `SKQUAD_TASK_LOOP_ENABLED` is true while continuing to serve health/readiness
-probes. Dynamic loading of plugin packages and per-agent model alias selection
-land in later registry/runtime slices.
+probes. Dynamic importlib plugin loading is implemented; automatic registry
+package installation and richer plugin lifecycle hooks land in later
+registry/runtime slices.
 
 ---
 

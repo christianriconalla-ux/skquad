@@ -109,6 +109,20 @@ class Plugin(Protocol):
 - The **agent runtime** queries the registry (via the control plane) for the
   plugins the agent is permitted to use, and loads them.
 
+Current runtime implementation supports importlib-based plugin loading from
+operator-provided config:
+
+- `SKQUAD_PLUGIN_MODULES` is a comma-separated list of import specs:
+  `module`, `module:factory`, `module:plugin`, or `module:Plugin`.
+- Without an explicit attribute, the loader looks for `create_plugin`, then
+  `plugin`, then `Plugin`.
+- `SKQUAD_ENABLED_PLUGINS`, when set, is a comma-separated allowlist of plugin
+  names. Any enabled name that is not loaded fails startup clearly.
+- Loaded plugins must expose a non-empty `name`, callable `tools()`, and
+  callable `invoke(call, config)`.
+- Unknown tool calls or plugin invocation failures produce a blocked task
+  result instead of crashing the worker loop.
+
 ---
 
 ## 6. Security & Sandboxing
