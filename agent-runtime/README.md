@@ -12,6 +12,19 @@ loop, and the plugin interface. Model-agnostic and extensible.
 agent-runtime/
 ├── skquad_runtime/
 │   ├── __init__.py
-│   └── runtime.py         # core loop (TODO phase-3)
+│   └── runtime.py         # bootstrap, health/readiness, core loop shell
+├── tests/
+│   └── test_runtime.py
 └── pyproject.toml
 ```
+
+## Current implementation
+
+- Loads bootstrap config from the operator-provided `SKQUAD_*` environment.
+- Reads mounted Kubernetes Secret directories for the agent credential and
+  optional LLM gateway virtual key without returning raw secret values.
+- Exposes `/healthz` and `/readyz` through FastAPI.
+- Provides the `skquad-agent-runtime` console script.
+
+The task pickup loop, plugin loader, LiteLLM calls, inbox draining, and memory
+store are still upcoming slices.

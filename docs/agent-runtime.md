@@ -204,6 +204,23 @@ An agent's runtime config (managed by the squad owner via the API):
 - **Idle timeout** — for scale-to-zero.
 - **Operating model excerpt** — the collaboration rules relevant to this agent.
 
+The current bootstrap contract is supplied by the operator through environment
+variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `SKQUAD_AGENT_ID` | Agent identity in the control plane. |
+| `SKQUAD_SQUAD_ID` | Owning squad identity. |
+| `SKQUAD_AGENT_ROLE` | Role text from the Agent CR. |
+| `SKQUAD_DEFAULT_PROVIDER_ID` | Default provider/model routing hint. |
+| `SKQUAD_IDLE_TIMEOUT` | Idle timeout string used for scale-to-zero behavior. |
+| `SKQUAD_CREDENTIALS_DIR` | Root directory for mounted agent credentials. |
+| `SKQUAD_AGENT_CREDENTIAL_PATH` | Mounted Secret directory or file for the agent credential. |
+| `SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH` | Mounted Secret directory or file for the gateway virtual key. |
+
+The runtime readiness check reports only booleans for secret presence; it never
+returns raw credential values.
+
 ---
 
 ## 11. Error Handling & Health

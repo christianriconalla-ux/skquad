@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -20,6 +21,7 @@ const (
 	agentContainerName = "agent"
 	defaultAgentImage  = "skquad/agent-runtime:0.1.0"
 	credentialsMount   = "/var/run/skquad/credentials"
+	runtimeHTTPPort    = int32(8080)
 )
 
 // AgentReconciler reconciles Agent resources into per-agent Deployments.
@@ -57,13 +59,24 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		container := corev1.Container{
 			Name:  agentContainerName,
 			Image: agentImage(&agent),
+			Ports: []corev1.ContainerPort{{
+				Name:          "http",
+				ContainerPort: runtimeHTTPPort,
+				Protocol:      corev1.ProtocolTCP,
+			}},
 			Env: []corev1.EnvVar{
 				{Name: "SKQUAD_AGENT_ID", Value: agent.Spec.AgentID},
 				{Name: "SKQUAD_SQUAD_ID", Value: agent.Spec.SquadID},
 				{Name: "SKQUAD_AGENT_ROLE", Value: agent.Spec.Role},
 				{Name: "SKQUAD_DEFAULT_PROVIDER_ID", Value: agent.Spec.DefaultProviderID},
 				{Name: "SKQUAD_IDLE_TIMEOUT", Value: agent.Spec.IdleTimeout},
+				{Name: "SKQUAD_RUNTIME_PORT", Value: fmt.Sprintf("%d", runtimeHTTPPort)},
+				{Name: "SKQUAD_CREDENTIALS_DIR", Value: credentialsMount},
+				{Name: "SKQUAD_AGENT_CREDENTIAL_PATH", Value: credentialsMount + "/agent"},
+				{Name: "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH", Value: credentialsMount + "/llm-gateway"},
 			},
+			LivenessProbe:  httpProbe("/healthz"),
+			ReadinessProbe: httpProbe("/readyz"),
 		}
 		volumes := agentSecretVolumes(&agent)
 		if len(volumes) > 0 {
@@ -146,6 +159,17 @@ func agentImage(agent *skquadv1.Agent) string {
 		return defaultAgentImage
 	}
 	return agent.Spec.Image
+}
+
+func httpProbe(path string) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: path,
+				Port: intstr.FromString("http"),
+			},
+		},
+	}
 }
 
 func agentSecretVolumes(agent *skquadv1.Agent) []corev1.Volume {

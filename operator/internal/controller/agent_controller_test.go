@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -74,6 +75,22 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	if got := deployment.Spec.Template.Spec.Containers[0].Image; got != agent.Spec.Image {
 		t.Fatalf("container image = %q, want %q", got, agent.Spec.Image)
 	}
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if got := container.Ports[0].ContainerPort; got != runtimeHTTPPort {
+		t.Fatalf("runtime port = %d, want %d", got, runtimeHTTPPort)
+	}
+	if container.LivenessProbe == nil || container.LivenessProbe.HTTPGet.Path != "/healthz" {
+		t.Fatalf("liveness probe = %#v, want /healthz", container.LivenessProbe)
+	}
+	if container.ReadinessProbe == nil || container.ReadinessProbe.HTTPGet.Path != "/readyz" {
+		t.Fatalf("readiness probe = %#v, want /readyz", container.ReadinessProbe)
+	}
+	if got := envValue(container.Env, "SKQUAD_AGENT_CREDENTIAL_PATH"); got != credentialsMount+"/agent" {
+		t.Fatalf("credential path env = %q, want %q", got, credentialsMount+"/agent")
+	}
+	if got := envValue(container.Env, "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH"); got != credentialsMount+"/llm-gateway" {
+		t.Fatalf("virtual key path env = %q, want %q", got, credentialsMount+"/llm-gateway")
+	}
 	if got := deployment.Spec.Template.Labels["skquad.io/agent-id"]; got != agent.Spec.AgentID {
 		t.Fatalf("agent label = %q, want %q", got, agent.Spec.AgentID)
 	}
@@ -139,4 +156,13 @@ func TestAgentReconcilerScalesInactiveAgentToZero(t *testing.T) {
 	if got := deployment.Spec.Template.Spec.Containers[0].Image; got != defaultAgentImage {
 		t.Fatalf("default image = %q, want %q", got, defaultAgentImage)
 	}
+}
+
+func envValue(env []corev1.EnvVar, name string) string {
+	for _, item := range env {
+		if item.Name == name {
+			return item.Value
+		}
+	}
+	return ""
 }
