@@ -1,0 +1,407 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/rossbrigoli/skquad/control-plane/internal/auth"
+	"github.com/rossbrigoli/skquad/control-plane/internal/config"
+	"github.com/rossbrigoli/skquad/control-plane/internal/domain"
+	"github.com/rossbrigoli/skquad/control-plane/internal/storage"
+)
+
+func TestSquadAgentTaskFlow(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name":    "Core Squad",
+		"mission": "ship the control plane",
+	}, http.StatusCreated, &squad)
+	require.NotEmpty(t, squad.ID)
+	require.Equal(t, "Core Squad", squad.Name)
+	require.NotEmpty(t, squad.Namespace)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Architect",
+		"role": "technical lead",
+	}, http.StatusCreated, &agent)
+	require.NotEmpty(t, agent.ID)
+	require.Equal(t, squad.ID, agent.SquadID)
+	require.Equal(t, 300, agent.IdleTimeoutSec)
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Design API slice",
+		"description":       "first vertical slice",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+	require.NotEmpty(t, task.ID)
+	require.Equal(t, domain.TaskTodo, task.Status)
+	require.Equal(t, agent.ID, task.AssigneeAgentID)
+
+	var moved domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/tasks/"+task.ID+"/move", map[string]any{
+		"status": "in-progress",
+	}, http.StatusOK, &moved)
+	require.Equal(t, domain.TaskInProgress, moved.Status)
+
+	var board struct {
+		Board domain.Board  `json:"board"`
+		Tasks []domain.Task `json:"tasks"`
+	}
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/board", nil, http.StatusOK, &board)
+	require.Equal(t, squad.ID, board.Board.SquadID)
+	require.Len(t, board.Tasks, 1)
+	require.Equal(t, moved.ID, board.Tasks[0].ID)
+}
+
+func TestValidationErrorEnvelope(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var body map[string]map[string]string
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "",
+	}, http.StatusBadRequest, &body)
+	require.Equal(t, "bad_request", body["error"]["code"])
+}
+
+func TestOIDCAuthProvisionsUser(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.AuthMode = config.AuthOIDC
+	handler := NewWithOIDCAuthenticator(cfg, storage.NewMemoryStore(), fakeOIDC{
+		profile: &auth.Profile{Email: "User@Example.com", Name: "OIDC User"},
+	})
+
+	var user domain.User
+	doJSON(t, handler, http.MethodGet, "/api/v1/auth/me", nil, http.StatusOK, &user)
+	require.Equal(t, "user@example.com", user.Email)
+	require.Equal(t, "OIDC User", user.Name)
+	require.Equal(t, domain.RoleUser, user.Role)
+}
+
+func TestOIDCAuthRejectsInvalidBearer(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.AuthMode = config.AuthOIDC
+	handler := NewWithOIDCAuthenticator(cfg, storage.NewMemoryStore(), fakeOIDC{
+		err: auth.ErrUnauthorized,
+	})
+
+	var body map[string]map[string]string
+	doJSON(t, handler, http.MethodGet, "/api/v1/auth/me", nil, http.StatusUnauthorized, &body)
+	require.Equal(t, "unauthorized", body["error"]["code"])
+}
+
+func TestAccessGrantAllowsReadButNotWrite(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.AuthMode = config.AuthOIDC
+	store := storage.NewMemoryStore()
+	handler := NewWithOIDCAuthenticator(cfg, store, headerOIDC{
+		"Bearer owner":  {Email: "owner@example.com", Name: "Owner"},
+		"Bearer viewer": {Email: "viewer@example.com", Name: "Viewer"},
+	})
+
+	var squad domain.Squad
+	doJSONAuth(t, handler, "Bearer owner", http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Shared Squad",
+	}, http.StatusCreated, &squad)
+
+	var viewer domain.User
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodGet, "/api/v1/auth/me", nil, http.StatusOK, &viewer)
+
+	var denied map[string]map[string]string
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodGet, "/api/v1/squads/"+squad.ID, nil, http.StatusForbidden, &denied)
+
+	var grant domain.AccessGrant
+	doJSONAuth(t, handler, "Bearer owner", http.MethodPost, "/api/v1/squads/"+squad.ID+"/access-grants", map[string]any{
+		"grantee_type": "user",
+		"grantee_id":   viewer.ID,
+		"permissions":  "talk",
+	}, http.StatusCreated, &grant)
+	require.Equal(t, viewer.ID, grant.GranteeID)
+
+	var readable domain.Squad
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodGet, "/api/v1/squads/"+squad.ID, nil, http.StatusOK, &readable)
+	require.Equal(t, squad.ID, readable.ID)
+
+	var forbidden map[string]map[string]string
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodPatch, "/api/v1/squads/"+squad.ID, map[string]any{
+		"mission": "take over",
+	}, http.StatusForbidden, &forbidden)
+	require.Equal(t, "forbidden", forbidden["error"]["code"])
+}
+
+func TestRegistryRequiresPlatformAdminForWrites(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.AuthMode = config.AuthOIDC
+	handler := NewWithOIDCAuthenticator(cfg, storage.NewMemoryStore(), headerOIDC{
+		"Bearer user": {Email: "user@example.com", Name: "User"},
+	})
+
+	var body map[string]map[string]string
+	doJSONAuth(t, handler, "Bearer user", http.MethodPost, "/api/v1/registry/llm-providers", map[string]any{
+		"name":     "OpenAI",
+		"kind":     "openai",
+		"base_url": "https://api.openai.com/v1",
+	}, http.StatusForbidden, &body)
+	require.Equal(t, "forbidden", body["error"]["code"])
+}
+
+func TestRegistryLLMProviderAndGenericResourceFlow(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var provider domain.LLMProvider
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/llm-providers", map[string]any{
+		"name":        "Local Llama",
+		"kind":        "openai-compatible",
+		"base_url":    "http://localhost:8123/v1",
+		"api_key_ref": "secret/local-llama",
+		"models":      []string{"default"},
+	}, http.StatusCreated, &provider)
+	require.NotEmpty(t, provider.ID)
+	require.Equal(t, domain.ResourceActive, provider.Status)
+
+	var providers []domain.LLMProvider
+	doJSON(t, handler, http.MethodGet, "/api/v1/registry/llm-providers", nil, http.StatusOK, &providers)
+	require.Len(t, providers, 1)
+
+	var skill domain.RegistryResource
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/skills", map[string]any{
+		"name":        "repo-reader",
+		"description": "Read project files",
+		"manifest": map[string]any{
+			"version": "1",
+		},
+	}, http.StatusCreated, &skill)
+	require.NotEmpty(t, skill.ID)
+	require.Equal(t, domain.ResSkill, skill.Type)
+
+	var updated domain.RegistryResource
+	doJSON(t, handler, http.MethodPatch, "/api/v1/registry/skills/"+skill.ID, map[string]any{
+		"description": "Read repository files",
+	}, http.StatusOK, &updated)
+	require.Equal(t, "Read repository files", updated.Description)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/registry/skills/"+skill.ID+"/deprecate", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	var deprecated domain.RegistryResource
+	doJSON(t, handler, http.MethodGet, "/api/v1/registry/skills/"+skill.ID, nil, http.StatusOK, &deprecated)
+	require.Equal(t, domain.ResourceDeprecated, deprecated.Status)
+}
+
+func TestAuditAndMeteringEndpoints(t *testing.T) {
+	t.Parallel()
+
+	store := storage.NewMemoryStore()
+	handler := New(testConfig(), store)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Measured Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Metered Agent",
+	}, http.StatusCreated, &agent)
+
+	require.NoError(t, store.RecordMetering(context.Background(), &domain.MeteringEvent{
+		AgentID:      agent.ID,
+		SquadID:      squad.ID,
+		ProviderID:   "",
+		Model:        "local",
+		InputTokens:  120,
+		OutputTokens: 35,
+		Cost:         0.42,
+		Currency:     "USD",
+	}))
+
+	var squadUsage domain.MeteringEvent
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/metering", nil, http.StatusOK, &squadUsage)
+	require.Equal(t, 120, squadUsage.InputTokens)
+	require.Equal(t, 35, squadUsage.OutputTokens)
+	require.InDelta(t, 0.42, squadUsage.Cost, 0.0001)
+
+	var agentUsage domain.MeteringEvent
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID+"/metering", nil, http.StatusOK, &agentUsage)
+	require.Equal(t, 120, agentUsage.InputTokens)
+	require.Equal(t, 35, agentUsage.OutputTokens)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.NotEmpty(t, audit)
+	require.Contains(t, auditActions(audit), "agent.create")
+	require.Contains(t, auditActions(audit), "squad.create")
+
+	var summary domain.MeteringEvent
+	doJSON(t, handler, http.MethodGet, "/api/v1/metering/summary", nil, http.StatusOK, &summary)
+	require.Equal(t, 155, summary.InputTokens+summary.OutputTokens)
+}
+
+func TestSquadAndAgentMutationsWriteCustomResources(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Runtime Squad",
+	}, http.StatusCreated, &squad)
+
+	var updatedSquad domain.Squad
+	doJSON(t, handler, http.MethodPatch, "/api/v1/squads/"+squad.ID, map[string]any{
+		"mission": "run agents",
+	}, http.StatusOK, &updatedSquad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Runner",
+	}, http.StatusCreated, &agent)
+
+	var updatedAgent domain.Agent
+	doJSON(t, handler, http.MethodPatch, "/api/v1/agents/"+agent.ID, map[string]any{
+		"role": "worker",
+	}, http.StatusOK, &updatedAgent)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/agents/"+agent.ID, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/squads/"+squad.ID, nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	require.Equal(t, []string{
+		"upsert-squad:" + squad.ID,
+		"upsert-squad:" + squad.ID,
+		"upsert-agent:" + agent.ID,
+		"upsert-agent:" + agent.ID,
+		"delete-agent:" + agent.ID,
+		"delete-squad:" + squad.ID,
+	}, crWriter.ops)
+}
+
+func testConfig() *config.Config {
+	return &config.Config{
+		Addr:               ":0",
+		AuthMode:           config.AuthDev,
+		DevEmail:           "dev@skquad.local",
+		DevName:            "Dev Admin",
+		DefaultIdleTimeout: 5 * time.Minute,
+	}
+}
+
+func doJSON(t *testing.T, handler http.Handler, method, path string, body any, wantStatus int, out any) {
+	t.Helper()
+	doJSONAuth(t, handler, "", method, path, body, wantStatus, out)
+}
+
+func doJSONAuth(t *testing.T, handler http.Handler, authorization, method, path string, body any, wantStatus int, out any) {
+	t.Helper()
+
+	var payload []byte
+	var err error
+	if body != nil {
+		payload, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, wantStatus, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), out))
+}
+
+type fakeOIDC struct {
+	profile *auth.Profile
+	err     error
+}
+
+func (f fakeOIDC) Authenticate(context.Context, string) (*auth.Profile, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.profile == nil {
+		return nil, errors.New("missing fake profile")
+	}
+	return f.profile, nil
+}
+
+type headerOIDC map[string]*auth.Profile
+
+func (h headerOIDC) Authenticate(_ context.Context, authorization string) (*auth.Profile, error) {
+	profile, ok := h[authorization]
+	if !ok {
+		return nil, auth.ErrUnauthorized
+	}
+	return profile, nil
+}
+
+func auditActions(entries []domain.AuditEntry) []string {
+	actions := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		actions = append(actions, entry.Action)
+	}
+	return actions
+}
+
+type fakeCRWriter struct {
+	ops []string
+}
+
+func (f *fakeCRWriter) UpsertSquad(_ context.Context, squad *domain.Squad) error {
+	f.ops = append(f.ops, "upsert-squad:"+squad.ID)
+	return nil
+}
+
+func (f *fakeCRWriter) DeleteSquad(_ context.Context, squad *domain.Squad) error {
+	f.ops = append(f.ops, "delete-squad:"+squad.ID)
+	return nil
+}
+
+func (f *fakeCRWriter) UpsertAgent(_ context.Context, agent *domain.Agent) error {
+	f.ops = append(f.ops, "upsert-agent:"+agent.ID)
+	return nil
+}
+
+func (f *fakeCRWriter) DeleteAgent(_ context.Context, agent *domain.Agent) error {
+	f.ops = append(f.ops, "delete-agent:"+agent.ID)
+	return nil
+}

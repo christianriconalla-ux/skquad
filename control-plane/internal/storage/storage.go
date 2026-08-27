@@ -1,0 +1,126 @@
+// Package storage defines the persistence interfaces for the control plane and
+// a Postgres implementation. The interfaces keep the httpapi and authz layers
+// testable with fakes.
+package storage
+
+import (
+	"context"
+	"errors"
+
+	"github.com/rossbrigoli/skquad/control-plane/internal/domain"
+)
+
+// ErrNotFound is returned when a requested entity does not exist.
+var ErrNotFound = errors.New("storage: not found")
+
+// ErrConflict is returned on a uniqueness violation (e.g. duplicate name).
+var ErrConflict = errors.New("storage: conflict")
+
+// Store is the aggregate persistence interface used by the API server.
+type Store interface {
+	UserStore
+	SquadStore
+	AgentStore
+	BoardStore
+	TaskStore
+	RegistryStore
+	PermissionStore
+	GrantStore
+	MeteringStore
+	AuditStore
+}
+
+// UserStore persists human users.
+type UserStore interface {
+	GetUser(ctx context.Context, id string) (*domain.User, error)
+	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
+	UpsertUser(ctx context.Context, u *domain.User) (*domain.User, error)
+	SetUserRole(ctx context.Context, id string, role domain.Role) error
+	ListUsers(ctx context.Context) ([]*domain.User, error)
+}
+
+// SquadStore persists squads.
+type SquadStore interface {
+	CreateSquad(ctx context.Context, s *domain.Squad) (*domain.Squad, error)
+	GetSquad(ctx context.Context, id string) (*domain.Squad, error)
+	GetSquadByName(ctx context.Context, ownerID, name string) (*domain.Squad, error)
+	UpdateSquad(ctx context.Context, s *domain.Squad) (*domain.Squad, error)
+	DeleteSquad(ctx context.Context, id string) error
+	ListSquads(ctx context.Context, ownerID string) ([]*domain.Squad, error) // ownerID "" = all
+}
+
+// AgentStore persists agents and their identities.
+type AgentStore interface {
+	CreateAgent(ctx context.Context, a *domain.Agent) (*domain.Agent, error)
+	GetAgent(ctx context.Context, id string) (*domain.Agent, error)
+	UpdateAgent(ctx context.Context, a *domain.Agent) (*domain.Agent, error)
+	DeleteAgent(ctx context.Context, id string) error
+	ListAgents(ctx context.Context, squadID string) ([]*domain.Agent, error)
+	SetAgentStatus(ctx context.Context, id string, status domain.AgentStatus) error
+
+	CreateAgentIdentity(ctx context.Context, i *domain.AgentIdentity) (*domain.AgentIdentity, error)
+	GetAgentIdentity(ctx context.Context, agentID string) (*domain.AgentIdentity, error)
+	RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string) (*domain.AgentIdentity, error)
+}
+
+// BoardStore persists Kanban boards.
+type BoardStore interface {
+	GetBoard(ctx context.Context, squadID string) (*domain.Board, error)
+}
+
+// TaskStore persists tasks.
+type TaskStore interface {
+	CreateTask(ctx context.Context, t *domain.Task) (*domain.Task, error)
+	GetTask(ctx context.Context, id string) (*domain.Task, error)
+	UpdateTask(ctx context.Context, t *domain.Task) (*domain.Task, error)
+	DeleteTask(ctx context.Context, id string) error
+	ListTasks(ctx context.Context, boardID string, status domain.TaskStatus) ([]*domain.Task, error) // status "" = all
+}
+
+// RegistryStore persists registry resources (LLM providers + generic resources).
+type RegistryStore interface {
+	CreateLLMProvider(ctx context.Context, p *domain.LLMProvider) (*domain.LLMProvider, error)
+	GetLLMProvider(ctx context.Context, id string) (*domain.LLMProvider, error)
+	UpdateLLMProvider(ctx context.Context, p *domain.LLMProvider) (*domain.LLMProvider, error)
+	DeprecateLLMProvider(ctx context.Context, id string) error
+	ListLLMProviders(ctx context.Context) ([]*domain.LLMProvider, error)
+
+	CreateResource(ctx context.Context, r *domain.RegistryResource) (*domain.RegistryResource, error)
+	GetResource(ctx context.Context, typ domain.ResourceType, id string) (*domain.RegistryResource, error)
+	UpdateResource(ctx context.Context, r *domain.RegistryResource) (*domain.RegistryResource, error)
+	DeprecateResource(ctx context.Context, typ domain.ResourceType, id string) error
+	ListResources(ctx context.Context, typ domain.ResourceType) ([]*domain.RegistryResource, error)
+}
+
+// PermissionStore persists agent → resource grants (Layer-2 RBAC).
+type PermissionStore interface {
+	GrantAgentPermission(ctx context.Context, p *domain.AgentPermission) error
+	RevokeAgentPermission(ctx context.Context, agentID string, typ domain.ResourceType, resourceID string) error
+	ListAgentPermissions(ctx context.Context, agentID string) ([]*domain.AgentPermission, error)
+	SetAgentPermissions(ctx context.Context, agentID string, perms []domain.AgentPermission) error
+	AgentHasPermission(ctx context.Context, agentID string, typ domain.ResourceType, resourceID string) (bool, error)
+}
+
+// GrantStore persists owner-issued access grants.
+type GrantStore interface {
+	CreateGrant(ctx context.Context, g *domain.AccessGrant) (*domain.AccessGrant, error)
+	GetGrant(ctx context.Context, id string) (*domain.AccessGrant, error)
+	RevokeGrant(ctx context.Context, id string) error
+	ListGrants(ctx context.Context, squadID string) ([]*domain.AccessGrant, error)
+	// UserMayAccessSquad reports whether user id may access squad (owner or grant).
+	UserMayAccessSquad(ctx context.Context, userID, squadID string) (bool, error)
+	// AgentMayMessageSquad reports whether agent id may message squad (grant).
+	AgentMayMessageSquad(ctx context.Context, agentID, squadID string) (bool, error)
+}
+
+// MeteringStore persists token-usage events.
+type MeteringStore interface {
+	RecordMetering(ctx context.Context, m *domain.MeteringEvent) error
+	SumMetering(ctx context.Context, squadID, agentID string) (*domain.MeteringEvent, error) // aggregated
+}
+
+// AuditStore persists the append-only audit log.
+type AuditStore interface {
+	RecordAudit(ctx context.Context, a *domain.AuditEntry) error
+	ListAudit(ctx context.Context, squadID string, limit int) ([]*domain.AuditEntry, error)
+}
