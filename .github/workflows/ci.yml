@@ -5,17 +5,143 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  docs:
+  control-plane:
+    name: Control plane
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: List docs
-        run: ls -R docs
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+      - name: Go vet
+        working-directory: control-plane
+        run: go vet ./...
+      - name: Go test
+        working-directory: control-plane
+        run: go test ./...
 
-  # TODO(phase-3): add lint + test jobs per component:
-  #   control-plane (go vet, go test)
-  #   operator (go vet, go test, envtest)
-  #   agent-runtime (ruff, pytest)
-  #   llm-gateway (ruff, pytest)
-  #   web (tsc, next lint, next build)
+  operator:
+    name: Operator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: operator/go.mod
+          cache-dependency-path: operator/go.sum
+      - name: Go vet
+        working-directory: operator
+        run: go vet ./...
+      - name: Go test
+        working-directory: operator
+        run: go test ./...
+
+  agent-runtime:
+    name: Agent runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        working-directory: agent-runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Unit tests
+        working-directory: agent-runtime
+        run: python -m unittest discover -s tests
+      - name: Compile Python
+        working-directory: agent-runtime
+        run: python -m py_compile skquad_runtime/*.py tests/*.py
+
+  llm-gateway:
+    name: LLM gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate Python metadata and config
+        working-directory: llm-gateway
+        run: |
+          python - <<'PY'
+          import pathlib
+          import tomllib
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          deps = pyproject["project"]["dependencies"]
+          assert any(dep.startswith("litellm") for dep in deps)
+          assert any(dep.startswith("psycopg") for dep in deps)
+
+          config = pathlib.Path("config.yaml").read_text()
+          for required in ("model_list:", "general_settings:", "LITELLM_MASTER_KEY", "DATABASE_URL"):
+              assert required in config
+          PY
+
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint chart
+        run: helm lint charts/skquad
+      - name: Render default chart
+        run: helm template skquad charts/skquad --namespace skquad-system
+      - name: Render provider-configured gateway chart
+        run: |
+          helm template skquad charts/skquad --namespace skquad-system -f - <<'EOF'
+          llmGateway:
+            masterKeySecret:
+              name: skquad-litellm-master
+              key: master-key
+            config: |
+              model_list:
+                - model_name: local-llama
+                  litellm_params:
+                    model: openai/local-llama
+                    api_base: http://llama-server.default.svc.cluster.local:8123/v1
+                    api_key: os.environ/LOCAL_LLM_API_KEY
+              general_settings:
+                master_key: os.environ/LITELLM_MASTER_KEY
+                database_url: os.environ/DATABASE_URL
+                store_model_in_db: true
+              litellm_settings:
+                drop_params: true
+                overwrite_user_with_key_hash: true
+                success_callback: []
+            extraEnv:
+              - name: LOCAL_LLM_API_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: local-llm-api-key
+                    key: api-key
+          EOF
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build

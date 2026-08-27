@@ -123,6 +123,7 @@ skquad/
 | [Web App & UX](docs/web-app-ux.md) | SPA flows + screens. |
 | [Plugin Architecture](docs/plugin-architecture.md) | Extensibility via plugins. |
 | [Security & Threat Model](docs/security-threat-model.md) | Threats + mitigations. |
+| [CI/CD](docs/ci-cd.md) | Validation workflow and delivery follow-ups. |
 | [ADRs](docs/adr/) | Key architectural decisions. |
 
 ---
