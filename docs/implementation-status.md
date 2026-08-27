@@ -8,11 +8,11 @@ or `Accepted` status means "design accepted", not "fully implemented".
 
 | Area | Implemented |
 | --- | --- |
-| Control plane API | Dev auth, OIDC bearer validation, squads, agents, boards, tasks, registry, permissions, access grants, audit/metering reads, gateway metering callback, agent task/message/context APIs, and Kubernetes outbox intents. |
-| Persistence | In-memory dev store and PostgreSQL store selected by `SKQUAD_DATABASE_URL`; current schema includes domain state, messages, agent memory, metering, audit, identities, and Kubernetes outbox. |
+| Control plane API | Dev auth, OIDC bearer validation, squads, agents, boards, tasks, registry, permissions, access grants, audit/metering reads, gateway metering callback, lease-backed/fenced agent task APIs, message/context APIs, and Kubernetes outbox intents. |
+| Persistence | In-memory dev store and PostgreSQL store selected by `SKQUAD_DATABASE_URL`; current schema includes domain state, task executions/results, messages, agent memory, metering, audit, identities, and Kubernetes outbox. |
 | Kubernetes operator | `Squad` and `Agent` CRDs, namespace/base-resource reconciliation, agent Deployments, finalizer cleanup, desired-active wake-up, and idle-timeout scale-down. |
 | Helm chart | CRDs, API server, operator, LiteLLM gateway, web app, optional PostgreSQL, ingress toggle, external Secret knobs, image values, runtime config wiring, and RBAC for current controllers. |
-| Agent runtime | Bootstrap/readiness, mounted Secret loading, task loop, inbox draining, LiteLLM handler, importlib plugin loading, per-task context fetch, permission-filtered tool exposure, and bounded memory persistence. |
+| Agent runtime | Bootstrap/readiness, mounted Secret loading, task loop, task execution fence propagation, inbox draining, LiteLLM handler, importlib plugin loading, per-task context fetch, permission-filtered tool exposure, and bounded memory persistence. |
 | LiteLLM gateway | Charted LiteLLM proxy, Postgres-backed virtual-key storage, master-key wiring, callback module, image smoke tests, and API-side virtual-key generation for active provider grants. |
 | Web app | Authenticated Next.js 16 shell with first-pass squad, agent, task, identity, chat, registry, grant, audit, and metering workflows. Current package audit is clean at `moderate` and above. |
 | CI/CD | Real validation CI, integration smoke, deployable images, GHCR publishing, optional Docker Hub mirroring, and lab GitOps promotion path. |
@@ -23,7 +23,6 @@ These items are not implemented yet and must not be implied as production-ready:
 
 | Gap | Tracking |
 | --- | --- |
-| Task execution attempts, leases, fencing tokens, and atomic durable task results. | Kanbunny `3648c26d-662a-4346-b1a7-1771a46bcbae` - `Add task execution leases and durable results`. |
 | Message retry scheduling, expiry, dead-letter handling, and non-lossy consult/reply behavior. | Kanbunny `9a4ec0f0-af8c-4eac-b27f-8fc328ced0a4` - `Add message retry, expiry, and dead-letter handling`. |
 | Stable OIDC `(issuer, subject)` user identity, fine-grained access-grant scope enforcement, and stronger audit guarantees. | Kanbunny `23ea081f-37d8-46cd-a379-ec4147826179` - `Harden OIDC identity, grant scopes, and audit guarantees`. |
 | Reduced API Secret RBAC and more precise agent egress/network policy generation. | Kanbunny `a4fc5852-3e86-43bd-ba3c-73a8a2f74132` - `Reduce API Secret RBAC and agent network-policy blast radius`. |

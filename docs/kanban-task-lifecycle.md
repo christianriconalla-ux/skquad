@@ -6,9 +6,9 @@
 > squad. **Tasks** are the unit of work. Agents **pick up tasks** assigned to
 > them; their **working context resets before each new task**.
 >
-> Basic task assignment, claim, status, and runtime context are implemented.
-> Leases, fencing tokens, and first-class durable task results remain follow-up
-> work; see [`implementation-status.md`](implementation-status.md).
+> Basic task assignment, claim, status, runtime context, execution leases, and
+> fenced terminal updates are implemented. Remaining hardening is tracked in
+> [`implementation-status.md`](implementation-status.md).
 
 ---
 
@@ -114,8 +114,11 @@ When an agent picks up a task:
    fresh context.
 5. The agent **runs the core loop** for the task (see
    [agent-runtime.md](agent-runtime.md)).
-6. On completion, the agent **updates the task status** and **distills durable
-   facts** into long-term memory.
+6. On completion, the agent submits the execution ID and fencing token with
+   its terminal status/result summary. The control plane stores the result on
+   the execution attempt in the same transaction as the task status update,
+   then optionally attempts to store a bounded memory summary. Memory write
+   failure is audited but does not make the completed task look retryable.
 
 > **Key invariant:** an agent works on **one task at a time**. Its working
 > context is scoped to the current task and reset before the next. Incoming
@@ -157,10 +160,18 @@ When an agent picks up a task:
 
 - **One assignee at a time** — a task has a single `assignee_agent_id`.
 - **Column moves** are atomic (single write) to avoid races.
-- **Pickup is idempotent** — if an agent pod restarts mid-task, it re-claims the
-  same task (the task remains `in-progress` with the same assignee).
+- **Pickup is lease-backed** — claim creates a `task_execution` attempt with a
+  worker ID, lease expiry, and fencing token. A second runtime cannot claim
+  while the active lease is valid.
+- **Crash recovery is lease-based** — if an agent pod dies mid-task, another
+  runtime can reclaim the assigned `in-progress` task only after the previous
+  execution lease expires.
+- **Terminal updates are fenced** — complete/block requests must include the
+  active execution ID and fencing token. Stale tokens are rejected with
+  conflict and cannot overwrite the task result.
 - **Optimistic concurrency** on task updates (version/updated_at check) to
-  prevent lost updates when a user and agent both act.
+  prevent lost updates when a user and agent both act remains a follow-up for
+  user-driven board edits.
 
 ---
 

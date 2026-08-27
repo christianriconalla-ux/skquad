@@ -88,7 +88,9 @@ type TaskStore interface {
 	DeleteTask(ctx context.Context, id string) error
 	ListTasks(ctx context.Context, boardID string, status domain.TaskStatus) ([]*domain.Task, error) // status "" = all
 	ListAgentTasks(ctx context.Context, agentID string) ([]*domain.Task, error)
-	ClaimNextTask(ctx context.Context, agentID string) (*domain.Task, error)
+	ClaimNextTask(ctx context.Context, agentID string, workerID string, leaseFor time.Duration) (*domain.Task, error)
+	HeartbeatTaskExecution(ctx context.Context, agentID string, executionID string, fencingToken string, leaseFor time.Duration) (*domain.TaskExecution, error)
+	CompleteTaskExecution(ctx context.Context, agentID string, taskID string, executionID string, fencingToken string, status domain.TaskStatus, summary string) (*domain.Task, error)
 }
 
 // AgentMemoryStore persists bounded agent long-term memory.

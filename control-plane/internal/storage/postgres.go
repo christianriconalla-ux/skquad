@@ -1096,14 +1096,27 @@ func (p *PostgresStore) ListAgentTasks(ctx context.Context, agentID string) ([]*
 	return tasks, mapPgErr(rows.Err())
 }
 
-func (p *PostgresStore) ClaimNextTask(ctx context.Context, agentID string) (*domain.Task, error) {
+func (p *PostgresStore) ClaimNextTask(ctx context.Context, agentID string, workerID string, leaseFor time.Duration) (*domain.Task, error) {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return nil, mapPgErr(err)
 	}
 	defer tx.Rollback(ctx)
+	if leaseFor <= 0 {
+		leaseFor = 5 * time.Minute
+	}
+	if workerID == "" {
+		workerID = agentID
+	}
+	active, err := p.agentHasActiveTaskExecution(ctx, tx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if active {
+		return nil, ErrNotFound
+	}
 
-	task, err := p.claimExistingInProgress(ctx, tx, agentID)
+	task, err := p.claimReclaimableInProgress(ctx, tx, agentID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
@@ -1113,23 +1126,49 @@ func (p *PostgresStore) ClaimNextTask(ctx context.Context, agentID string) (*dom
 			return nil, err
 		}
 	}
+	exec, err := p.createTaskExecutionTx(ctx, tx, task.ID, agentID, workerID, leaseFor)
+	if err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, mapPgErr(err)
 	}
-	return task, nil
+	return attachTaskExecution(task, exec), nil
 }
 
-func (p *PostgresStore) claimExistingInProgress(ctx context.Context, tx pgx.Tx, agentID string) (*domain.Task, error) {
+func (p *PostgresStore) agentHasActiveTaskExecution(ctx context.Context, tx pgx.Tx, agentID string) (bool, error) {
+	var active bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM task_executions
+			WHERE agent_id = $1
+			  AND status = $2
+			  AND lease_expires_at > now()
+		)
+	`, agentID, domain.TaskExecutionActive).Scan(&active)
+	return active, mapPgErr(err)
+}
+
+func (p *PostgresStore) claimReclaimableInProgress(ctx context.Context, tx pgx.Tx, agentID string) (*domain.Task, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT id::text, board_id::text, squad_id::text, title, description, status,
 		       coalesce(assignee_agent_id::text, ''), created_by_type, created_by_id::text,
 		       position, created_at, updated_at
 		FROM tasks
-		WHERE assignee_agent_id = $1 AND status = $2
+		WHERE assignee_agent_id = $1
+		  AND status = $2
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM task_executions
+		    WHERE task_id = tasks.id
+		      AND status = $3
+		      AND lease_expires_at > now()
+		  )
 		ORDER BY updated_at
 		LIMIT 1
-		FOR UPDATE
-	`, agentID, domain.TaskInProgress)
+		FOR UPDATE SKIP LOCKED
+	`, agentID, domain.TaskInProgress, domain.TaskExecutionActive)
 	return scanTask(row)
 }
 
@@ -1159,6 +1198,111 @@ func (p *PostgresStore) claimTodoTask(ctx context.Context, tx pgx.Tx, agentID st
 		          position, created_at, updated_at
 	`, agentID, domain.TaskTodo, domain.TaskInProgress)
 	return scanTask(row)
+}
+
+func (p *PostgresStore) createTaskExecutionTx(ctx context.Context, tx pgx.Tx, taskID string, agentID string, workerID string, leaseFor time.Duration) (*domain.TaskExecution, error) {
+	row := tx.QueryRow(ctx, `
+		INSERT INTO task_executions (
+			task_id, agent_id, worker_id, lease_expires_at
+		)
+		VALUES ($1, $2, $3, now() + ($4::text)::interval)
+		RETURNING id::text, task_id::text, agent_id::text, worker_id, fencing_token,
+		          status, lease_expires_at, coalesce(result_status, ''), result_summary,
+		          started_at, completed_at, updated_at
+	`, taskID, agentID, workerID, fmt.Sprintf("%d seconds", int(leaseFor/time.Second)))
+	return scanTaskExecution(row)
+}
+
+func (p *PostgresStore) HeartbeatTaskExecution(ctx context.Context, agentID string, executionID string, fencingToken string, leaseFor time.Duration) (*domain.TaskExecution, error) {
+	if leaseFor <= 0 {
+		leaseFor = 5 * time.Minute
+	}
+	row := p.pool.QueryRow(ctx, `
+		UPDATE task_executions
+		SET lease_expires_at = now() + ($4::text)::interval,
+		    updated_at = now()
+		WHERE id = $1
+		  AND agent_id = $2
+		  AND fencing_token = $3
+		  AND status = 'active'
+		RETURNING id::text, task_id::text, agent_id::text, worker_id, fencing_token,
+		          status, lease_expires_at, coalesce(result_status, ''), result_summary,
+		          started_at, completed_at, updated_at
+	`, executionID, agentID, fencingToken, fmt.Sprintf("%d seconds", int(leaseFor/time.Second)))
+	exec, err := scanTaskExecution(row)
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrConflict
+	}
+	return exec, err
+}
+
+func (p *PostgresStore) CompleteTaskExecution(ctx context.Context, agentID string, taskID string, executionID string, fencingToken string, status domain.TaskStatus, summary string) (*domain.Task, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	var execStatus domain.TaskExecutionStatus
+	if status == domain.TaskBlocked {
+		execStatus = domain.TaskExecutionBlocked
+	} else {
+		execStatus = domain.TaskExecutionCompleted
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE task_executions
+		SET status = $6,
+		    result_status = $7,
+		    result_summary = $8,
+		    completed_at = now(),
+		    updated_at = now()
+		WHERE id = $1
+		  AND task_id = $2
+		  AND agent_id = $3
+		  AND fencing_token = $4
+		  AND status = $5
+	`, executionID, taskID, agentID, fencingToken, domain.TaskExecutionActive, execStatus, status, summary)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrConflict
+	}
+
+	row := tx.QueryRow(ctx, `
+		WITH existing AS (
+			SELECT id, board_id, status
+			FROM tasks
+			WHERE id = $1 AND assignee_agent_id = $2
+			FOR UPDATE
+		),
+		next_position AS (
+			SELECT coalesce(max(position) + 1, 1) AS position
+			FROM tasks
+			WHERE board_id = (SELECT board_id FROM existing)
+			  AND status = $3
+			  AND id <> $1
+		)
+		UPDATE tasks
+		SET status = $3,
+		    position = CASE
+		        WHEN tasks.status = $3 THEN tasks.position
+		        ELSE (SELECT position FROM next_position)
+		    END,
+		    updated_at = now()
+		WHERE id = (SELECT id FROM existing)
+		RETURNING id::text, board_id::text, squad_id::text, title, description, status,
+		          coalesce(assignee_agent_id::text, ''), created_by_type, created_by_id::text,
+		          position, created_at, updated_at
+	`, taskID, agentID, status)
+	task, err := scanTask(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return task, nil
 }
 
 func (p *PostgresStore) CreateAgentMemory(ctx context.Context, memory *domain.AgentMemory) (*domain.AgentMemory, error) {
@@ -1547,6 +1691,42 @@ func scanTask(row scanner) (*domain.Task, error) {
 		return nil, mapPgErr(err)
 	}
 	return &t, nil
+}
+
+func scanTaskExecution(row scanner) (*domain.TaskExecution, error) {
+	var exec domain.TaskExecution
+	var completedAt sql.NullTime
+	if err := row.Scan(
+		&exec.ID,
+		&exec.TaskID,
+		&exec.AgentID,
+		&exec.WorkerID,
+		&exec.FencingToken,
+		&exec.Status,
+		&exec.LeaseExpiresAt,
+		&exec.ResultStatus,
+		&exec.ResultSummary,
+		&exec.StartedAt,
+		&completedAt,
+		&exec.UpdatedAt,
+	); err != nil {
+		return nil, mapPgErr(err)
+	}
+	if completedAt.Valid {
+		exec.CompletedAt = completedAt.Time
+	}
+	return &exec, nil
+}
+
+func attachTaskExecution(task *domain.Task, exec *domain.TaskExecution) *domain.Task {
+	if task == nil || exec == nil {
+		return task
+	}
+	task.ExecutionID = exec.ID
+	task.WorkerID = exec.WorkerID
+	task.FencingToken = exec.FencingToken
+	task.LeaseExpiresAt = exec.LeaseExpiresAt
+	return task
 }
 
 func scanAgentMemory(row scanner) (*domain.AgentMemory, error) {

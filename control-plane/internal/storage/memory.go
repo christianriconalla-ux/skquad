@@ -34,6 +34,7 @@ type MemoryStore struct {
 	metering      map[string]*domain.MeteringEvent
 	auditLog      map[string]*domain.AuditEntry
 	tasks         map[string]*domain.Task
+	taskExecs     map[string]*domain.TaskExecution
 	agentMemory   map[string]*domain.AgentMemory
 	messages      map[string]*domain.Message
 	k8sOutbox     map[string]*domain.KubernetesOutboxEvent
@@ -57,6 +58,7 @@ func NewMemoryStore() *MemoryStore {
 		metering:      map[string]*domain.MeteringEvent{},
 		auditLog:      map[string]*domain.AuditEntry{},
 		tasks:         map[string]*domain.Task{},
+		taskExecs:     map[string]*domain.TaskExecution{},
 		agentMemory:   map[string]*domain.AgentMemory{},
 		messages:      map[string]*domain.Message{},
 		k8sOutbox:     map[string]*domain.KubernetesOutboxEvent{},
@@ -932,15 +934,27 @@ func (m *MemoryStore) ListAgentTasks(_ context.Context, agentID string) ([]*doma
 	return out, nil
 }
 
-func (m *MemoryStore) ClaimNextTask(_ context.Context, agentID string) (*domain.Task, error) {
+func (m *MemoryStore) ClaimNextTask(_ context.Context, agentID string, workerID string, leaseFor time.Duration) (*domain.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.agents[agentID]; !ok {
 		return nil, ErrNotFound
 	}
+	now := time.Now().UTC()
+	if leaseFor <= 0 {
+		leaseFor = 5 * time.Minute
+	}
+	if workerID == "" {
+		workerID = agentID
+	}
+	for _, exec := range m.taskExecs {
+		if exec.AgentID == agentID && exec.Status == domain.TaskExecutionActive && exec.LeaseExpiresAt.After(now) {
+			return nil, ErrNotFound
+		}
+	}
 	var candidate *domain.Task
 	for _, task := range m.tasks {
-		if task.AssigneeAgentID == agentID && task.Status == domain.TaskInProgress {
+		if task.AssigneeAgentID == agentID && task.Status == domain.TaskInProgress && !m.taskHasActiveExecutionLocked(task.ID, now) {
 			if candidate == nil || task.UpdatedAt.Before(candidate.UpdatedAt) {
 				candidate = task
 			}
@@ -962,8 +976,81 @@ func (m *MemoryStore) ClaimNextTask(_ context.Context, agentID string) (*domain.
 		candidate.Status = domain.TaskInProgress
 		candidate.Position = m.nextTaskPosition(candidate.BoardID, domain.TaskInProgress)
 	}
-	candidate.UpdatedAt = time.Now().UTC()
-	return cloneTask(candidate), nil
+	candidate.UpdatedAt = now
+	exec := &domain.TaskExecution{
+		ID:             uuid.NewString(),
+		TaskID:         candidate.ID,
+		AgentID:        agentID,
+		WorkerID:       workerID,
+		FencingToken:   uuid.NewString(),
+		Status:         domain.TaskExecutionActive,
+		LeaseExpiresAt: now.Add(leaseFor),
+		StartedAt:      now,
+		UpdatedAt:      now,
+	}
+	m.taskExecs[exec.ID] = exec
+	return taskWithExecution(candidate, exec), nil
+}
+
+func (m *MemoryStore) HeartbeatTaskExecution(_ context.Context, agentID string, executionID string, fencingToken string, leaseFor time.Duration) (*domain.TaskExecution, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	exec, ok := m.taskExecs[executionID]
+	if !ok || exec.AgentID != agentID || exec.FencingToken != fencingToken {
+		return nil, ErrConflict
+	}
+	if exec.Status != domain.TaskExecutionActive {
+		return nil, ErrConflict
+	}
+	if leaseFor <= 0 {
+		leaseFor = 5 * time.Minute
+	}
+	now := time.Now().UTC()
+	exec.LeaseExpiresAt = now.Add(leaseFor)
+	exec.UpdatedAt = now
+	return cloneTaskExecution(exec), nil
+}
+
+func (m *MemoryStore) CompleteTaskExecution(_ context.Context, agentID string, taskID string, executionID string, fencingToken string, status domain.TaskStatus, summary string) (*domain.Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	exec, ok := m.taskExecs[executionID]
+	if !ok || exec.AgentID != agentID || exec.TaskID != taskID || exec.FencingToken != fencingToken {
+		return nil, ErrConflict
+	}
+	if exec.Status != domain.TaskExecutionActive {
+		return nil, ErrConflict
+	}
+	task, ok := m.tasks[taskID]
+	if !ok || task.AssigneeAgentID != agentID {
+		return nil, ErrNotFound
+	}
+	if status != domain.TaskInReview && status != domain.TaskDone && status != domain.TaskBlocked {
+		return nil, ErrConflict
+	}
+	now := time.Now().UTC()
+	task.Status = status
+	task.Position = m.nextTaskPosition(task.BoardID, status)
+	task.UpdatedAt = now
+	if status == domain.TaskBlocked {
+		exec.Status = domain.TaskExecutionBlocked
+	} else {
+		exec.Status = domain.TaskExecutionCompleted
+	}
+	exec.ResultStatus = status
+	exec.ResultSummary = summary
+	exec.CompletedAt = now
+	exec.UpdatedAt = now
+	return taskWithExecution(task, exec), nil
+}
+
+func (m *MemoryStore) taskHasActiveExecutionLocked(taskID string, now time.Time) bool {
+	for _, exec := range m.taskExecs {
+		if exec.TaskID == taskID && exec.Status == domain.TaskExecutionActive && exec.LeaseExpiresAt.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *MemoryStore) CreateAgentMemory(_ context.Context, memory *domain.AgentMemory) (*domain.AgentMemory, error) {
@@ -1252,6 +1339,26 @@ func cloneTask(t *domain.Task) *domain.Task {
 		return nil
 	}
 	v := *t
+	return &v
+}
+
+func taskWithExecution(t *domain.Task, exec *domain.TaskExecution) *domain.Task {
+	out := cloneTask(t)
+	if out == nil || exec == nil {
+		return out
+	}
+	out.ExecutionID = exec.ID
+	out.WorkerID = exec.WorkerID
+	out.FencingToken = exec.FencingToken
+	out.LeaseExpiresAt = exec.LeaseExpiresAt
+	return out
+}
+
+func cloneTaskExecution(exec *domain.TaskExecution) *domain.TaskExecution {
+	if exec == nil {
+		return nil
+	}
+	v := *exec
 	return &v
 }
 

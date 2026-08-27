@@ -170,6 +170,37 @@ type Task struct {
 	Position        int        `json:"position"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	ExecutionID     string     `json:"execution_id,omitempty"`
+	WorkerID        string     `json:"worker_id,omitempty"`
+	FencingToken    string     `json:"fencing_token,omitempty"`
+	LeaseExpiresAt  time.Time  `json:"lease_expires_at,omitempty"`
+}
+
+// TaskExecutionStatus is the lifecycle of one runtime attempt for a task.
+type TaskExecutionStatus string
+
+const (
+	TaskExecutionActive    TaskExecutionStatus = "active"
+	TaskExecutionCompleted TaskExecutionStatus = "completed"
+	TaskExecutionBlocked   TaskExecutionStatus = "blocked"
+	TaskExecutionExpired   TaskExecutionStatus = "expired"
+)
+
+// TaskExecution is a fenced, lease-backed runtime attempt. Terminal result
+// fields are committed atomically with the task status transition.
+type TaskExecution struct {
+	ID             string              `json:"id"`
+	TaskID         string              `json:"task_id"`
+	AgentID        string              `json:"agent_id"`
+	WorkerID       string              `json:"worker_id"`
+	FencingToken   string              `json:"fencing_token"`
+	Status         TaskExecutionStatus `json:"status"`
+	LeaseExpiresAt time.Time           `json:"lease_expires_at"`
+	ResultStatus   TaskStatus          `json:"result_status,omitempty"`
+	ResultSummary  string              `json:"result_summary,omitempty"`
+	StartedAt      time.Time           `json:"started_at"`
+	CompletedAt    time.Time           `json:"completed_at,omitempty"`
+	UpdatedAt      time.Time           `json:"updated_at"`
 }
 
 // AgentMemory is a scoped long-term memory row for an agent. Squad-scoped

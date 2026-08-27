@@ -103,6 +103,30 @@ CREATE INDEX IF NOT EXISTS idx_tasks_squad ON tasks(squad_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_agent_id);
 
 -- ---------------------------------------------------------------------------
+-- Task executions (runtime attempts with leases and fencing)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_executions (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id          uuid NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    agent_id         uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    worker_id        text NOT NULL,
+    fencing_token    text NOT NULL UNIQUE DEFAULT gen_random_uuid()::text,
+    status           text NOT NULL DEFAULT 'active'
+                     CHECK (status IN ('active','completed','blocked','expired')),
+    lease_expires_at timestamptz NOT NULL,
+    result_status    text CHECK (result_status IN ('in-review','done','blocked')),
+    result_summary   text NOT NULL DEFAULT '',
+    started_at       timestamptz NOT NULL DEFAULT now(),
+    completed_at     timestamptz,
+    updated_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_task_executions_task
+    ON task_executions(task_id, status, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_task_executions_agent_active
+    ON task_executions(agent_id, lease_expires_at)
+    WHERE status = 'active';
+
+-- ---------------------------------------------------------------------------
 -- Registry: LLM providers (BYOM)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS llm_providers (

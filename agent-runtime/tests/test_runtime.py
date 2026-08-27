@@ -208,6 +208,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/tasks/claim")
         self.assertEqual(calls[0].headers["Authorization"], "Bearer credential")
         self.assertEqual(calls[0].headers["X-skquad-agent-id"], "agent-1")
+        self.assertTrue(calls[0].headers["X-skquad-worker-id"].startswith("agent-1:"))
 
     def test_control_plane_client_claim_handles_no_content(self):
         client = ControlPlaneClient(
@@ -218,6 +219,38 @@ class RuntimeBootstrapTest(unittest.TestCase):
         )
 
         self.assertIsNone(client.claim_task())
+
+    def test_control_plane_client_sends_task_execution_fence(self):
+        calls = []
+
+        def opener(req):
+            calls.append(req)
+            return FakeResponse(
+                200,
+                b'{"id":"task-1","squad_id":"squad-1","title":"T","description":"",'
+                b'"status":"done","assignee_agent_id":"agent-1"}',
+            )
+
+        client = ControlPlaneClient(
+            "http://control-plane",
+            "agent-1",
+            "credential",
+            opener=opener,
+            worker_id="worker-1",
+        )
+
+        task = fake_task("task-1")
+        client.heartbeat("busy", task)
+        client.complete_task(task, "done", summary="finished", persist_memory=True)
+
+        heartbeat_body = json.loads(calls[0].data.decode("utf-8"))
+        complete_body = json.loads(calls[1].data.decode("utf-8"))
+        self.assertEqual(calls[0].headers["X-skquad-worker-id"], "worker-1")
+        self.assertEqual(heartbeat_body["execution_id"], "exec-task-1")
+        self.assertEqual(heartbeat_body["fencing_token"], "fence-task-1")
+        self.assertEqual(complete_body["execution_id"], "exec-task-1")
+        self.assertEqual(complete_body["fencing_token"], "fence-task-1")
+        self.assertEqual(complete_body["summary"], "finished")
 
     def test_control_plane_client_lists_runtime_resources(self):
         calls = []
@@ -925,7 +958,7 @@ class FakeControlPlaneClient:
     def claim_task(self):
         return self.claimed_task
 
-    def heartbeat(self, status):
+    def heartbeat(self, status, task=None):
         self.heartbeats.append(status)
         return {}
 
@@ -936,13 +969,15 @@ class FakeControlPlaneClient:
         self.acked_messages.append(message_id)
         return fake_message(message_id, "ping", status="delivered")
 
-    def complete_task(self, task_id, status="in-review", summary="", persist_memory=False):
+    def complete_task(self, task, status="in-review", summary="", persist_memory=False):
+        task_id = task.id if isinstance(task, RuntimeTask) else task
         self.completed.append((task_id, status))
         self.completion_summaries.append(summary)
         self.persist_memory.append(persist_memory)
         return fake_task(task_id, status=status)
 
-    def block_task(self, task_id):
+    def block_task(self, task, summary=""):
+        task_id = task.id if isinstance(task, RuntimeTask) else task
         self.blocked.append(task_id)
         return fake_task(task_id, status="blocked")
 
@@ -1090,6 +1125,10 @@ def fake_task(task_id, status="in-progress"):
         description="",
         status=status,
         assignee_agent_id="agent-1",
+        execution_id=f"exec-{task_id}",
+        worker_id="worker-1",
+        fencing_token=f"fence-{task_id}",
+        lease_expires_at="2026-08-28T02:00:00Z",
     )
 
 

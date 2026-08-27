@@ -64,8 +64,8 @@ Implemented slice:
   configured, stored credential verifier hashes, and public secret references
 - Agent registry permission list/set endpoints
 - Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
-  granted active resource discovery, task start/complete/block, queued message
-  send/list/ack, and status heartbeats
+  granted active resource discovery, task start/fenced complete/block, queued
+  message send/list/ack, and status heartbeats
 - User-facing agent chat endpoints that enqueue durable messages for owned or
   granted agents
 - Board retrieval and task create/update/move/delete
@@ -85,6 +85,8 @@ Implemented slice:
 - Agent task-context endpoint with assigned-task metadata, granted active
   resource descriptors, bounded recent memory, and opt-in completion-summary
   memory writes
+- Task execution attempts with worker IDs, active leases, fencing tokens, and
+  terminal result summaries stored atomically with task status transitions
 - OIDC bearer JWT validation with first-login user provisioning
 - Owner/admin/granted-user read authorization for squad resources
 - Platform-admin authorization for registry writes
@@ -94,6 +96,5 @@ Implemented slice:
   into the `Agent` CR so the operator can scale an agent up or keep it warm
   while work remains
 
-Next slices are LiteLLM key refresh/revocation when grants change, task
-execution leases/results, semantic memory search, artifact persistence, and web
-implementation.
+Next slices are LiteLLM key refresh/revocation when grants change, semantic
+memory search, artifact persistence, and web implementation.

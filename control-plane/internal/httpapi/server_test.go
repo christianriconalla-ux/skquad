@@ -724,18 +724,20 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
 	require.Equal(t, task.ID, claimed.ID)
 	require.Equal(t, domain.TaskInProgress, claimed.Status)
+	require.NotEmpty(t, claimed.ExecutionID)
+	require.NotEmpty(t, claimed.FencingToken)
 
-	var claimedAgain domain.Task
-	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimedAgain)
-	require.Equal(t, claimed.ID, claimedAgain.ID)
+	doAgentJSONNoBody(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusNoContent)
 
 	var currentAgent domain.Agent
 	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID, nil, http.StatusOK, &currentAgent)
 	require.Equal(t, domain.AgentBusy, currentAgent.Status)
 
 	var completed domain.Task
-	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]string{
-		"status": string(domain.TaskDone),
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
+		"status":        string(domain.TaskDone),
+		"execution_id":  claimed.ExecutionID,
+		"fencing_token": claimed.FencingToken,
 	}, http.StatusOK, &completed)
 	require.Equal(t, domain.TaskDone, completed.Status)
 
@@ -748,6 +750,56 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
 	require.Contains(t, auditActions(audit), "task.claim")
 	require.Contains(t, auditActions(audit), "task.complete")
+}
+
+func TestAgentRuntimeRejectsStaleTaskExecutionFence(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Fenced Task Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Fenced Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Reject stale completion",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+
+	var claimed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
+
+	var conflict map[string]map[string]string
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
+		"status":        "done",
+		"execution_id":  claimed.ExecutionID,
+		"fencing_token": "stale-token",
+	}, http.StatusConflict, &conflict)
+	require.Equal(t, "conflict", conflict["error"]["code"])
+
+	var current domain.Task
+	doJSON(t, handler, http.MethodGet, "/api/v1/tasks/"+task.ID, nil, http.StatusOK, &current)
+	require.Equal(t, domain.TaskInProgress, current.Status)
+
+	var completed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
+		"status":        "done",
+		"execution_id":  claimed.ExecutionID,
+		"fencing_token": claimed.FencingToken,
+	}, http.StatusOK, &completed)
+	require.Equal(t, domain.TaskDone, completed.Status)
 }
 
 func TestAgentRuntimeTaskContextIncludesScopedMemory(t *testing.T) {
@@ -850,12 +902,16 @@ func TestAgentRuntimeCompletionCanPersistMemory(t *testing.T) {
 		"title":             "Persist result",
 		"assignee_agent_id": agent.ID,
 	}, http.StatusCreated, &task)
+	var claimed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
 
 	var completed domain.Task
 	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
 		"status":         "done",
 		"summary":        "Durable completion summary",
 		"persist_memory": true,
+		"execution_id":   claimed.ExecutionID,
+		"fencing_token":  claimed.FencingToken,
 	}, http.StatusOK, &completed)
 	require.Equal(t, domain.TaskDone, completed.Status)
 
@@ -895,10 +951,14 @@ func TestAssignedTaskMirrorsAgentBusyAndCompletionMirrorsIdle(t *testing.T) {
 	currentAgent, err := store.GetAgent(context.Background(), agent.ID)
 	require.NoError(t, err)
 	require.Equal(t, domain.AgentBusy, currentAgent.Status)
+	var claimed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
 
 	var completed domain.Task
-	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]string{
-		"status": string(domain.TaskDone),
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
+		"status":        string(domain.TaskDone),
+		"execution_id":  claimed.ExecutionID,
+		"fencing_token": claimed.FencingToken,
 	}, http.StatusOK, &completed)
 	require.Equal(t, domain.TaskDone, completed.Status)
 	currentAgent, err = store.GetAgent(context.Background(), agent.ID)
@@ -937,10 +997,14 @@ func TestAgentCompletionStaysBusyWhenMoreAssignedWorkExists(t *testing.T) {
 		"title":             "Second task",
 		"assignee_agent_id": agent.ID,
 	}, http.StatusCreated, &second)
+	var claimed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
 
 	var completed domain.Task
-	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+first.ID+"/complete", map[string]string{
-		"status": string(domain.TaskDone),
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+first.ID+"/complete", map[string]any{
+		"status":        string(domain.TaskDone),
+		"execution_id":  claimed.ExecutionID,
+		"fencing_token": claimed.FencingToken,
 	}, http.StatusOK, &completed)
 
 	var currentAgent domain.Agent

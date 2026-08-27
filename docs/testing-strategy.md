@@ -67,5 +67,5 @@ helm template skquad charts/skquad --namespace skquad-system --include-crds \
 ## Boundaries
 
 The current integration suite does not replace the remaining roadmap work for
-task execution leases, message dead-letter handling, semantic memory, or richer
-browser-level web tests. Those features should add focused tests as they land.
+message dead-letter handling, semantic memory, or richer browser-level web
+tests. Those features should add focused tests as they land.

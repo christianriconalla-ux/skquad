@@ -104,18 +104,23 @@ one-way verifier hash for runtime authentication.
 > |--------|------|-------------|
 > | `GET` | `/api/v1/agents/me/tasks` | Tasks assigned to this agent. |
 > | `GET` | `/api/v1/agents/me/resources` | Active registry resources granted to this agent; secret refs are not returned. |
-> | `POST` | `/api/v1/agents/me/tasks/claim` | Idempotently claim the current `in-progress` task or the next assigned `todo` task. |
+> | `POST` | `/api/v1/agents/me/tasks/claim` | Claim the next assigned `todo` task or an assigned `in-progress` task whose prior execution lease has expired. Returns task fields plus `execution_id`, `worker_id`, `fencing_token`, and `lease_expires_at`. |
 > | `GET` | `/api/v1/agents/me/tasks/:id/context` | Return task-scoped context for an assigned task: task metadata, granted active resource descriptors, recent scoped memory, and payload limits. |
 > | `POST` | `/api/v1/agents/me/tasks/:id/start` | Mark a task `in-progress` (context reset). |
-> | `POST` | `/api/v1/agents/me/tasks/:id/complete` | Mark a task done / in-review; may include `{ summary, persist_memory }` to persist a bounded completion summary as agent memory. |
-> | `POST` | `/api/v1/agents/me/tasks/:id/block` | Mark a task `blocked`. |
-> | `POST` | `/api/v1/agents/me/heartbeat` | Report `idle`, `busy`, or `error`. |
+> | `POST` | `/api/v1/agents/me/tasks/:id/complete` | Mark a task done / in-review. Requires `{ execution_id, fencing_token }`; may include `{ summary, persist_memory }`. The summary is stored on the execution attempt atomically with the terminal task status; optional memory persistence is best-effort after that commit. |
+> | `POST` | `/api/v1/agents/me/tasks/:id/block` | Mark a task `blocked`. Requires `{ execution_id, fencing_token }`; may include `{ summary }`. |
+> | `POST` | `/api/v1/agents/me/heartbeat` | Report `idle`, `busy`, or `error`. Busy heartbeats can include `{ execution_id, fencing_token }` to extend the active task lease. |
 
 Task status values currently accepted by the API are `todo`, `in-progress`,
 `in-review`, `done`, and `blocked`. User-driven move requests reject unknown
 statuses with a `bad_request` error. Agent completion is narrower: agents may
 complete to `in-review` or `done`; they must use the block endpoint for
 `blocked`.
+
+Agent runtimes should send `X-Skquad-Worker-ID` on claim and follow-up calls.
+The control plane rejects stale/missing execution fences on terminal updates
+with `409 conflict` or `400 bad_request`, preventing duplicate pods from
+completing the same task after a lease has moved on.
 
 ---
 

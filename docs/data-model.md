@@ -113,7 +113,34 @@ CREATE TABLE tasks (
 );
 CREATE INDEX idx_tasks_board_status ON tasks(board_id, status, position);
 CREATE INDEX idx_tasks_assignee ON tasks(assignee_agent_id) WHERE status IN ('todo','in-progress');
+
+CREATE TABLE task_executions (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id          uuid NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    agent_id         uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    worker_id        text NOT NULL,          -- runtime pod/process instance
+    fencing_token    text NOT NULL UNIQUE DEFAULT gen_random_uuid()::text,
+    status           text NOT NULL DEFAULT 'active'
+                     CHECK (status IN ('active','completed','blocked','expired')),
+    lease_expires_at timestamptz NOT NULL,
+    result_status    text CHECK (result_status IN ('in-review','done','blocked')),
+    result_summary   text NOT NULL DEFAULT '',
+    started_at       timestamptz NOT NULL DEFAULT now(),
+    completed_at     timestamptz,
+    updated_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_task_executions_task
+    ON task_executions(task_id, status, lease_expires_at);
+CREATE INDEX idx_task_executions_agent_active
+    ON task_executions(agent_id, lease_expires_at)
+    WHERE status = 'active';
 ```
+
+`task_executions` is the durable runtime attempt/result table. The active row's
+`fencing_token` must accompany complete/block calls; stale tokens are rejected.
+Terminal updates store `result_status` and `result_summary` on the execution in
+the same database transaction that moves the task to `in-review`, `done`, or
+`blocked`.
 
 ---
 

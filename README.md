@@ -84,7 +84,8 @@ The repository currently implements:
 - operator reconciliation, deletion finalizers, workload wake-up, and
   idle scale-down;
 - task claiming and completion, task-scoped context, bounded recent memory,
-  inbox processing, and permission-filtered runtime plugins;
+  lease-backed/fenced task execution, durable task-result summaries, inbox
+  processing, and permission-filtered runtime plugins;
 - LiteLLM gateway deployment and agent-scoped virtual-key provisioning; and
 - Helm packaging plus CI validation and versioned container images.
 
@@ -96,8 +97,7 @@ Important gaps remain:
 - automatic LiteLLM key refresh or revocation after permission changes is not
   implemented;
 - semantic vector memory and durable artifact storage are planned;
-- task execution leases, transactional task-result persistence, and message
-  dead-letter handling need further work; and
+- message retry/dead-letter handling needs further work; and
 - production ingress, TLS, external-database operations, observability, and
   network-policy hardening are not complete.
 

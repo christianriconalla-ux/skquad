@@ -108,8 +108,11 @@ The loop is intentionally small. Complexity is pushed into **plugins** and the
 
 Current implementation note: the runtime has a handler-driven `run_task_once`
 primitive that performs the lifecycle boundary around one task: claim, report
-busy, invoke a supplied handler, complete to `in-review`/`done`, block on
-handler failure or invalid status, then report idle. The default
+busy with the active execution fence, invoke a supplied handler, complete to
+`in-review`/`done`, block on handler failure or invalid status, then report
+idle. Claim returns an execution ID, worker ID, fencing token, and lease expiry;
+the runtime sends that fence on busy heartbeats and terminal complete/block
+calls so duplicate pods cannot finish stale work. The default
 `LiteLLMTaskHandler` now reads the mounted LLM gateway virtual key, fetches
 task-scoped context from `/api/v1/agents/me/tasks/:id/context`, calls the
 OpenAI-compatible gateway through LiteLLM, exposes only currently granted plugin

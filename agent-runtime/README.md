@@ -29,7 +29,8 @@ agent-runtime/
   not emitted.
 - Provides a small control-plane client for agent-authenticated task listing,
   resource discovery, inbox listing/acknowledgement, task-context loading,
-  claiming, completion/blocking, and idle/busy/error heartbeats.
+  lease-backed claiming, fenced completion/blocking, and idle/busy/error
+  heartbeats.
 - Provides `poll_once`, `run_inbox_once`, and `run_task_once` primitives. The
   runtime loop drains a bounded inbox batch and then processes at most one task
   per iteration so messages and tasks do not starve each other.
@@ -55,9 +56,9 @@ agent-runtime/
   not cached across tasks, so permission and memory changes take effect without
   a pod restart.
 - Sends non-empty completion summaries back to the control plane for bounded
-  per-agent memory persistence.
+  task-result and optional per-agent memory persistence.
 - Provides the `skquad-agent-runtime` console script.
 
 Automatic registry package installation, semantic memory search, persistent
-message failure counts/dead-lettering, transactional task results, and artifact
-persistence are still upcoming slices.
+message failure counts/dead-lettering, and artifact persistence are still
+upcoming slices.

@@ -24,7 +24,10 @@ import (
 	"github.com/rossbrigoli/skquad/control-plane/internal/storage"
 )
 
-const maxAgentMemoryContentChars = 4000
+const (
+	maxAgentMemoryContentChars = 4000
+	defaultTaskExecutionLease  = 2 * time.Minute
+)
 
 var errNoGatewayModels = errors.New("no active LLM provider models granted")
 
@@ -1765,7 +1768,7 @@ func (s *Server) agentRuntimeResource(ctx context.Context, perm *domain.AgentPer
 
 func (s *Server) claimCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
 	principal := currentAgent(r.Context())
-	task, err := s.store.ClaimNextTask(r.Context(), principal.Agent.ID)
+	task, err := s.store.ClaimNextTask(r.Context(), principal.Agent.ID, workerIDFromRequest(r, principal.Agent.ID), defaultTaskExecutionLease)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
@@ -1795,6 +1798,8 @@ func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request
 		Status        domain.TaskStatus `json:"status"`
 		Summary       string            `json:"summary"`
 		PersistMemory bool              `json:"persist_memory"`
+		ExecutionID   string            `json:"execution_id"`
+		FencingToken  string            `json:"fencing_token"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
 		if !decodeJSON(w, r, &req) {
@@ -1808,15 +1813,28 @@ func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "bad_request", "status must be in-review or done")
 		return
 	}
-	updated, ok := s.updateCurrentAgentTaskStatus(w, r, req.Status, domain.AgentIdle, "task.complete")
+	executionID, fencingToken, ok := requireExecutionFence(w, req.ExecutionID, req.FencingToken)
 	if !ok {
 		return
 	}
+	principal := currentAgent(r.Context())
+	taskID := chi.URLParam(r, "taskID")
+	summary := trimRunes(strings.TrimSpace(req.Summary), maxAgentMemoryContentChars)
+	updated, err := s.store.CompleteTaskExecution(r.Context(), principal.Agent.ID, taskID, executionID, fencingToken, req.Status, summary)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
+		return
+	}
+	s.recordAgentAudit(r, principal.Agent.ID, "task.complete", "task", updated.ID, updated.SquadID, nil)
 	if req.PersistMemory && strings.TrimSpace(req.Summary) != "" {
-		principal := currentAgent(r.Context())
 		metadata, err := json.Marshal(map[string]any{
-			"kind":        "task_completion",
-			"task_status": string(req.Status),
+			"kind":         "task_completion",
+			"task_status":  string(req.Status),
+			"execution_id": executionID,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to prepare memory metadata")
@@ -1826,24 +1844,59 @@ func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request
 			AgentID:      principal.Agent.ID,
 			SquadID:      updated.SquadID,
 			SourceTaskID: updated.ID,
-			Content:      trimRunes(strings.TrimSpace(req.Summary), maxAgentMemoryContentChars),
+			Content:      summary,
 			Metadata:     metadata,
 		}); err != nil {
-			writeStorageError(w, err)
-			return
+			auditMetadata, _ := json.Marshal(map[string]string{"error": err.Error(), "execution_id": executionID})
+			s.recordAgentAudit(r, principal.Agent.ID, "task.memory_persist_failed", "task", updated.ID, updated.SquadID, auditMetadata)
 		}
 	}
 	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) blockCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
-	s.setCurrentAgentTaskStatus(w, r, domain.TaskBlocked, domain.AgentIdle, "task.block")
+	var req struct {
+		Summary      string `json:"summary"`
+		ExecutionID  string `json:"execution_id"`
+		FencingToken string `json:"fencing_token"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	executionID, fencingToken, ok := requireExecutionFence(w, req.ExecutionID, req.FencingToken)
+	if !ok {
+		return
+	}
+	principal := currentAgent(r.Context())
+	updated, err := s.store.CompleteTaskExecution(
+		r.Context(),
+		principal.Agent.ID,
+		chi.URLParam(r, "taskID"),
+		executionID,
+		fencingToken,
+		domain.TaskBlocked,
+		trimRunes(strings.TrimSpace(req.Summary), maxAgentMemoryContentChars),
+	)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
+		return
+	}
+	s.recordAgentAudit(r, principal.Agent.ID, "task.block", "task", updated.ID, updated.SquadID, nil)
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) currentAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	principal := currentAgent(r.Context())
 	var req struct {
-		Status domain.AgentStatus `json:"status"`
+		Status       domain.AgentStatus `json:"status"`
+		ExecutionID  string             `json:"execution_id"`
+		FencingToken string             `json:"fencing_token"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
 		if !decodeJSON(w, r, &req) {
@@ -1856,6 +1909,16 @@ func (s *Server) currentAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if req.Status != domain.AgentIdle && req.Status != domain.AgentBusy && req.Status != domain.AgentError {
 		writeError(w, http.StatusBadRequest, "bad_request", "status is invalid")
 		return
+	}
+	if req.Status == domain.AgentBusy && strings.TrimSpace(req.ExecutionID) != "" {
+		if strings.TrimSpace(req.FencingToken) == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "fencing_token is required with execution_id")
+			return
+		}
+		if _, err := s.store.HeartbeatTaskExecution(r.Context(), principal.Agent.ID, strings.TrimSpace(req.ExecutionID), strings.TrimSpace(req.FencingToken), defaultTaskExecutionLease); err != nil {
+			writeStorageError(w, err)
+			return
+		}
 	}
 	status := req.Status
 	if status == domain.AgentIdle {
@@ -2371,6 +2434,28 @@ func namespaceFor(name string) string {
 
 func generatedCredentialRef(namespace, agentID string) string {
 	return fmt.Sprintf("k8s://%s/agent-%s-credential-%s", namespace, agentID, uuid.NewString()[:8])
+}
+
+func workerIDFromRequest(r *http.Request, agentID string) string {
+	workerID := strings.TrimSpace(r.Header.Get("X-Skquad-Worker-ID"))
+	if workerID == "" {
+		return agentID
+	}
+	return workerID
+}
+
+func requireExecutionFence(w http.ResponseWriter, executionID string, fencingToken string) (string, string, bool) {
+	executionID = strings.TrimSpace(executionID)
+	fencingToken = strings.TrimSpace(fencingToken)
+	if executionID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "execution_id is required")
+		return "", "", false
+	}
+	if fencingToken == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "fencing_token is required")
+		return "", "", false
+	}
+	return executionID, fencingToken, true
 }
 
 func generatedVirtualKeyRef(namespace, agentID string) string {

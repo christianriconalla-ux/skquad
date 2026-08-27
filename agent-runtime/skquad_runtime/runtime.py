@@ -8,6 +8,7 @@ import inspect
 import importlib
 import logging
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +82,10 @@ class RuntimeTask:
     description: str
     status: str
     assignee_agent_id: str
+    execution_id: str = ""
+    worker_id: str = ""
+    fencing_token: str = ""
+    lease_expires_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -330,10 +335,12 @@ class ControlPlaneClient:
         agent_id: str,
         credential: str,
         opener: Callable[[request.Request], object] | None = None,
+        worker_id: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.agent_id = agent_id
         self.credential = credential
+        self.worker_id = worker_id or f"{agent_id}:{uuid.uuid4()}"
         self._opener = opener or request.urlopen
 
     @classmethod
@@ -345,8 +352,12 @@ class ControlPlaneClient:
             raise RuntimeError("SKQUAD_CONTROL_PLANE_URL is required")
         return cls(config.control_plane_url, config.agent_id, credential)
 
-    def heartbeat(self, status: str) -> dict[str, object]:
-        return self._json("POST", "/api/v1/agents/me/heartbeat", {"status": status})
+    def heartbeat(self, status: str, task: RuntimeTask | None = None) -> dict[str, object]:
+        body: dict[str, object] = {"status": status}
+        if task is not None and task.execution_id:
+            body["execution_id"] = task.execution_id
+            body["fencing_token"] = task.fencing_token
+        return self._json("POST", "/api/v1/agents/me/heartbeat", body)
 
     def list_tasks(self) -> list[RuntimeTask]:
         payload = self._json("GET", "/api/v1/agents/me/tasks", None)
@@ -380,20 +391,32 @@ class ControlPlaneClient:
 
     def complete_task(
         self,
-        task_id: str,
+        task: RuntimeTask | str,
         status: str = "in-review",
         summary: str = "",
         persist_memory: bool = False,
     ) -> RuntimeTask:
+        task_id, execution_id, fencing_token = task_fence(task)
         payload = self._json(
             "POST",
             f"/api/v1/agents/me/tasks/{task_id}/complete",
-            {"status": status, "summary": summary, "persist_memory": persist_memory},
+            {
+                "status": status,
+                "summary": summary,
+                "persist_memory": persist_memory,
+                "execution_id": execution_id,
+                "fencing_token": fencing_token,
+            },
         )
         return runtime_task(payload)
 
-    def block_task(self, task_id: str) -> RuntimeTask:
-        payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/block", None)
+    def block_task(self, task: RuntimeTask | str, summary: str = "") -> RuntimeTask:
+        task_id, execution_id, fencing_token = task_fence(task)
+        payload = self._json(
+            "POST",
+            f"/api/v1/agents/me/tasks/{task_id}/block",
+            {"summary": summary, "execution_id": execution_id, "fencing_token": fencing_token},
+        )
         return runtime_task(payload)
 
     def _json(self, method: str, path: str, body: object | None, allow_empty: bool = False):
@@ -401,6 +424,7 @@ class ControlPlaneClient:
         headers = {
             "Authorization": f"Bearer {self.credential}",
             "X-Skquad-Agent-ID": self.agent_id,
+            "X-Skquad-Worker-ID": self.worker_id,
             "Accept": "application/json",
         }
         if body is not None:
@@ -429,7 +453,17 @@ def runtime_task(payload: Mapping[str, object]) -> RuntimeTask:
         description=str(payload.get("description", "")),
         status=str(payload.get("status", "")),
         assignee_agent_id=str(payload.get("assignee_agent_id", "")),
+        execution_id=str(payload.get("execution_id", "")),
+        worker_id=str(payload.get("worker_id", "")),
+        fencing_token=str(payload.get("fencing_token", "")),
+        lease_expires_at=str(payload.get("lease_expires_at", "")),
     )
+
+
+def task_fence(task: RuntimeTask | str) -> tuple[str, str, str]:
+    if isinstance(task, RuntimeTask):
+        return task.id, task.execution_id, task.fencing_token
+    return task, "", ""
 
 
 def runtime_resource(payload: Mapping[str, object]) -> RuntimeResource:
@@ -871,7 +905,7 @@ def poll_once(config: BootstrapConfig, client: ControlPlaneClient | None = None)
     if task is None:
         control_plane.heartbeat("idle")
         return None
-    control_plane.heartbeat("busy")
+    control_plane.heartbeat("busy", task)
     return task
 
 
@@ -892,7 +926,7 @@ def run_task_once(
     if state is not None:
         state.task_claimed(task)
     LOGGER.info("agent task claimed", extra={"task_id": task.id, "squad_id": task.squad_id})
-    control_plane.heartbeat("busy")
+    control_plane.heartbeat("busy", task)
     started = monotonic()
     try:
         result = handle_task_with_timeout(handler, task, config)
@@ -901,14 +935,14 @@ def run_task_once(
             "agent task timed out",
             extra={"task_id": task.id, "timeout_seconds": config.task_timeout_seconds},
         )
-        final_task = control_plane.block_task(task.id)
+        final_task = control_plane.block_task(task, summary=str(exc))
         control_plane.heartbeat("idle")
         if state is not None:
             state.task_failed(task.id, str(exc), timed_out=True)
         return final_task
     except Exception as exc:
         LOGGER.exception("agent task handling failed", extra={"task_id": task.id})
-        final_task = control_plane.block_task(task.id)
+        final_task = control_plane.block_task(task, summary=str(exc))
         control_plane.heartbeat("idle")
         if state is not None:
             state.task_failed(task.id, str(exc))
@@ -918,17 +952,17 @@ def run_task_once(
             "agent task handler returned invalid status",
             extra={"task_id": task.id, "status": result.status},
         )
-        final_task = control_plane.block_task(task.id)
+        final_task = control_plane.block_task(task, summary=f"invalid task status {result.status!r}")
         control_plane.heartbeat("idle")
         if state is not None:
             state.task_failed(task.id, f"invalid task status {result.status!r}")
         return final_task
     summary = trim_text(result.summary, config.task_summary_max_chars)
     if result.status == "blocked":
-        final_task = control_plane.block_task(task.id)
+        final_task = control_plane.block_task(task, summary=summary)
     else:
         final_task = control_plane.complete_task(
-            task.id,
+            task,
             result.status,
             summary=summary,
             persist_memory=bool(summary.strip()),
