@@ -76,6 +76,9 @@ Implemented slice:
 - Process-local in-memory store for development and handler tests
 - Postgres-backed user/squad/agent/identity/permission/board/task/access-grant/
   registry, metering, audit, message-inbox schema, and agent-memory schema
+- Agent task-context endpoint with assigned-task metadata, granted active
+  resource descriptors, bounded recent memory, and opt-in completion-summary
+  memory writes
 - OIDC bearer JWT validation with first-login user provisioning
 - Owner/admin/granted-user read authorization for squad resources
 - Platform-admin authorization for registry writes
@@ -85,5 +88,5 @@ Implemented slice:
   into the `Agent` CR so the operator can scale an agent up or keep it warm
   while work remains
 
-Next slices are runtime inbox draining, memory integration, and runtime
-plugin/context integration.
+Next slices are runtime inbox draining, semantic memory search, artifact
+persistence, and gateway/web implementation.

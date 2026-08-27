@@ -106,13 +106,13 @@ Current implementation note: the runtime has a handler-driven `run_task_once`
 primitive that performs the lifecycle boundary around one task: claim, report
 busy, invoke a supplied handler, complete to `in-review`/`done`, block on
 handler failure or invalid status, then report idle. The default
-`LiteLLMTaskHandler` now reads the mounted LLM gateway virtual key, calls the
+`LiteLLMTaskHandler` now reads the mounted LLM gateway virtual key, fetches
+task-scoped context from `/api/v1/agents/me/tasks/:id/context`, calls the
 OpenAI-compatible gateway through LiteLLM, exposes plugin tool schemas, invokes
 plugin tool calls, and maps `SKQUAD_STATUS: done|blocked` markers into task
-completion state. Before calling the LLM, it can discover the agent's active
-granted registry resources from `/api/v1/agents/me/resources` and include those
-descriptors in the task context without exposing provider API-key refs or
-resource auth refs.
+completion state. The fetched context includes only the assigned task, active
+granted resource descriptors, and recent scoped memory rows; provider API-key
+refs and resource auth refs are not exposed to the runtime.
 
 ---
 
@@ -209,6 +209,12 @@ later packaging/registry slice.
 - **Read:** at task start (or on demand), retrieve relevant memory rows by
   semantic similarity and inject into the working context.
 - Scoped **per agent** (and optionally per squad for shared memory).
+
+Current implementation note: the runtime fetches bounded recent memory through
+the task-context endpoint and sends non-empty task completion summaries back to
+the control plane for per-agent memory persistence. Embedding generation,
+semantic vector retrieval, explicit "remember" commands, pruning, and artifact
+storage remain follow-up work.
 
 ---
 

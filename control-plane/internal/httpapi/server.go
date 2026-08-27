@@ -24,6 +24,8 @@ import (
 	"github.com/rossbrigoli/skquad/control-plane/internal/storage"
 )
 
+const maxAgentMemoryContentChars = 4000
+
 // Store is the persistence surface required by the current API slice.
 type Store interface {
 	storage.UserStore
@@ -36,6 +38,7 @@ type Store interface {
 	storage.MeteringStore
 	storage.AuditStore
 	storage.TaskStore
+	storage.AgentMemoryStore
 	storage.MessageStore
 }
 
@@ -105,6 +108,7 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 			r.Post("/messages", s.createCurrentAgentMessage)
 			r.Post("/messages/{messageID}/ack", s.ackCurrentAgentMessage)
 			r.Post("/tasks/claim", s.claimCurrentAgentTask)
+			r.Get("/tasks/{taskID}/context", s.getCurrentAgentTaskContext)
 			r.Post("/tasks/{taskID}/start", s.startCurrentAgentTask)
 			r.Post("/tasks/{taskID}/complete", s.completeCurrentAgentTask)
 			r.Post("/tasks/{taskID}/block", s.blockCurrentAgentTask)
@@ -1300,23 +1304,70 @@ func (s *Server) listCurrentAgentTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listCurrentAgentResources(w http.ResponseWriter, r *http.Request) {
 	principal := currentAgent(r.Context())
-	perms, err := s.store.ListAgentPermissions(r.Context(), principal.Agent.ID)
+	resources, err := s.currentAgentResources(r.Context(), principal.Agent.ID)
 	if err != nil {
 		writeStorageError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, resources)
+}
+
+func (s *Server) currentAgentResources(ctx context.Context, agentID string) ([]agentRuntimeResource, error) {
+	perms, err := s.store.ListAgentPermissions(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
 	resources := []agentRuntimeResource{}
 	for _, perm := range perms {
-		resource, ok, err := s.agentRuntimeResource(r.Context(), perm)
+		resource, ok, err := s.agentRuntimeResource(ctx, perm)
 		if err != nil {
-			writeStorageError(w, err)
-			return
+			return nil, err
 		}
 		if ok {
 			resources = append(resources, resource)
 		}
 	}
-	writeJSON(w, http.StatusOK, resources)
+	return resources, nil
+}
+
+type agentTaskContext struct {
+	Task      *domain.Task           `json:"task"`
+	Resources []agentRuntimeResource `json:"resources"`
+	Memory    []*domain.AgentMemory  `json:"memory"`
+	Limits    map[string]int         `json:"limits"`
+}
+
+func (s *Server) getCurrentAgentTaskContext(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	task, err := s.store.GetTask(r.Context(), chi.URLParam(r, "taskID"))
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if task.AssigneeAgentID != principal.Agent.ID {
+		writeError(w, http.StatusForbidden, "forbidden", "task is not assigned to this agent")
+		return
+	}
+	resources, err := s.currentAgentResources(r.Context(), principal.Agent.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	memoryLimit := boundedIntQuery(r, "memory_limit", 10, 20)
+	memories, err := s.store.ListAgentMemory(r.Context(), principal.Agent.ID, task.SquadID, memoryLimit)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, agentTaskContext{
+		Task:      task,
+		Resources: resources,
+		Memory:    memories,
+		Limits: map[string]int{
+			"memory_limit":         memoryLimit,
+			"memory_content_chars": maxAgentMemoryContentChars,
+		},
+	})
 }
 
 func (s *Server) listCurrentAgentMessages(w http.ResponseWriter, r *http.Request) {
@@ -1576,7 +1627,9 @@ func (s *Server) startCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Status domain.TaskStatus `json:"status"`
+		Status        domain.TaskStatus `json:"status"`
+		Summary       string            `json:"summary"`
+		PersistMemory bool              `json:"persist_memory"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
 		if !decodeJSON(w, r, &req) {
@@ -1590,7 +1643,32 @@ func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "bad_request", "status must be in-review or done")
 		return
 	}
-	s.setCurrentAgentTaskStatus(w, r, req.Status, domain.AgentIdle, "task.complete")
+	updated, ok := s.updateCurrentAgentTaskStatus(w, r, req.Status, domain.AgentIdle, "task.complete")
+	if !ok {
+		return
+	}
+	if req.PersistMemory && strings.TrimSpace(req.Summary) != "" {
+		principal := currentAgent(r.Context())
+		metadata, err := json.Marshal(map[string]any{
+			"kind":        "task_completion",
+			"task_status": string(req.Status),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to prepare memory metadata")
+			return
+		}
+		if _, err := s.store.CreateAgentMemory(r.Context(), &domain.AgentMemory{
+			AgentID:      principal.Agent.ID,
+			SquadID:      updated.SquadID,
+			SourceTaskID: updated.ID,
+			Content:      trimRunes(strings.TrimSpace(req.Summary), maxAgentMemoryContentChars),
+			Metadata:     metadata,
+		}); err != nil {
+			writeStorageError(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) blockCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
@@ -1638,33 +1716,41 @@ func (s *Server) currentAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setCurrentAgentTaskStatus(w http.ResponseWriter, r *http.Request, taskStatus domain.TaskStatus, agentStatus domain.AgentStatus, action string) {
+	updated, ok := s.updateCurrentAgentTaskStatus(w, r, taskStatus, agentStatus, action)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) updateCurrentAgentTaskStatus(w http.ResponseWriter, r *http.Request, taskStatus domain.TaskStatus, agentStatus domain.AgentStatus, action string) (*domain.Task, bool) {
 	principal := currentAgent(r.Context())
 	task, err := s.store.GetTask(r.Context(), chi.URLParam(r, "taskID"))
 	if err != nil {
 		writeStorageError(w, err)
-		return
+		return nil, false
 	}
 	if task.AssigneeAgentID != principal.Agent.ID {
 		writeError(w, http.StatusForbidden, "forbidden", "task is not assigned to this agent")
-		return
+		return nil, false
 	}
 	task.Status = taskStatus
 	updated, err := s.store.UpdateTask(r.Context(), task)
 	if err != nil {
 		writeStorageError(w, err)
-		return
+		return nil, false
 	}
 	if agentStatus == domain.AgentIdle {
 		if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
-			return
+			return nil, false
 		}
 	} else if err := s.setAgentStatusAndMirror(r.Context(), principal.Agent.ID, agentStatus); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
-		return
+		return nil, false
 	}
 	s.recordAgentAudit(r, principal.Agent.ID, action, "task", updated.ID, updated.SquadID, nil)
-	writeJSON(w, http.StatusOK, updated)
+	return updated, true
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -2026,14 +2112,29 @@ func (s *Server) setAgentStatusAndMirror(ctx context.Context, agentID string, st
 }
 
 func auditLimit(r *http.Request) int {
-	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	return boundedIntQuery(r, "limit", 100, 500)
+}
+
+func boundedIntQuery(r *http.Request, key string, fallback int, maximum int) int {
+	limit, err := strconv.Atoi(r.URL.Query().Get(key))
 	if err != nil || limit <= 0 {
-		return 100
+		return fallback
 	}
-	if limit > 500 {
-		return 500
+	if limit > maximum {
+		return maximum
 	}
 	return limit
+}
+
+func trimRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

@@ -57,6 +57,14 @@ Agent pods ──► LLM Gateway (LiteLLM proxy: metering, cost, BYOM, perms)
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design.
 
+Current implementation status: the control-plane API, operator, Helm chart, and
+Python agent runtime have working vertical slices for squad/agent/task
+lifecycle, generated runtime credentials, task wake-up/scale-down, messaging
+inbox APIs, granted resource discovery, dynamic runtime plugins, and
+task-scoped context with bounded recent memory. The LLM gateway and web app are
+still early placeholders, and semantic vector memory search remains a planned
+follow-up.
+
 ---
 
 ## Repository Layout

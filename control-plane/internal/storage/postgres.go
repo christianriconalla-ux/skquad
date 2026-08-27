@@ -979,6 +979,47 @@ func (p *PostgresStore) claimTodoTask(ctx context.Context, tx pgx.Tx, agentID st
 	return scanTask(row)
 }
 
+func (p *PostgresStore) CreateAgentMemory(ctx context.Context, memory *domain.AgentMemory) (*domain.AgentMemory, error) {
+	row := p.pool.QueryRow(ctx, `
+		INSERT INTO agent_memory (
+			agent_id, squad_id, content, source_task_id, metadata
+		)
+		VALUES ($1, nullif($2, '')::uuid, $3, nullif($4, '')::uuid, $5)
+		RETURNING id::text, agent_id::text, coalesce(squad_id::text, ''), content,
+		          coalesce(source_task_id::text, ''), metadata, created_at
+	`, memory.AgentID, memory.SquadID, memory.Content, memory.SourceTaskID, defaultJSON(memory.Metadata, "{}"))
+	return scanAgentMemory(row)
+}
+
+func (p *PostgresStore) ListAgentMemory(ctx context.Context, agentID string, squadID string, limit int) ([]*domain.AgentMemory, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT id::text, agent_id::text, coalesce(squad_id::text, ''), content,
+		       coalesce(source_task_id::text, ''), metadata, created_at
+		FROM agent_memory
+		WHERE agent_id = $1
+		  AND (squad_id IS NULL OR squad_id = nullif($2, '')::uuid)
+		ORDER BY created_at DESC, id
+		LIMIT $3
+	`, agentID, squadID, limit)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+
+	var memories []*domain.AgentMemory
+	for rows.Next() {
+		memory, err := scanAgentMemory(rows)
+		if err != nil {
+			return nil, err
+		}
+		memories = append(memories, memory)
+	}
+	return memories, mapPgErr(rows.Err())
+}
+
 func (p *PostgresStore) CreateMessage(ctx context.Context, m *domain.Message) (*domain.Message, error) {
 	row := p.pool.QueryRow(ctx, `
 		INSERT INTO messages (
@@ -1201,6 +1242,22 @@ func scanTask(row scanner) (*domain.Task, error) {
 		return nil, mapPgErr(err)
 	}
 	return &t, nil
+}
+
+func scanAgentMemory(row scanner) (*domain.AgentMemory, error) {
+	var memory domain.AgentMemory
+	if err := row.Scan(
+		&memory.ID,
+		&memory.AgentID,
+		&memory.SquadID,
+		&memory.Content,
+		&memory.SourceTaskID,
+		&memory.Metadata,
+		&memory.CreatedAt,
+	); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return &memory, nil
 }
 
 func scanMessage(row scanner) (*domain.Message, error) {

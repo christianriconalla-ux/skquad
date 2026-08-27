@@ -44,7 +44,11 @@ agent-runtime/
 - Treats `/readyz` as an execution-readiness check: when the task loop is
   enabled, required control-plane/gateway config plus both mounted Secret values
   must be present.
+- Fetches task-scoped context for the assigned task before LLM execution,
+  including granted active resources and recent scoped memory rows.
+- Sends non-empty completion summaries back to the control plane for bounded
+  per-agent memory persistence.
 - Provides the `skquad-agent-runtime` console script.
 
-Inbox draining, automatic registry package installation, and memory store
-integration are still upcoming slices.
+Inbox draining, automatic registry package installation, semantic memory search,
+and artifact persistence are still upcoming slices.

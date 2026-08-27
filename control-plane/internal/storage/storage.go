@@ -23,6 +23,7 @@ type Store interface {
 	AgentStore
 	BoardStore
 	TaskStore
+	AgentMemoryStore
 	MessageStore
 	RegistryStore
 	PermissionStore
@@ -78,6 +79,12 @@ type TaskStore interface {
 	ListTasks(ctx context.Context, boardID string, status domain.TaskStatus) ([]*domain.Task, error) // status "" = all
 	ListAgentTasks(ctx context.Context, agentID string) ([]*domain.Task, error)
 	ClaimNextTask(ctx context.Context, agentID string) (*domain.Task, error)
+}
+
+// AgentMemoryStore persists bounded agent long-term memory.
+type AgentMemoryStore interface {
+	CreateAgentMemory(ctx context.Context, memory *domain.AgentMemory) (*domain.AgentMemory, error)
+	ListAgentMemory(ctx context.Context, agentID string, squadID string, limit int) ([]*domain.AgentMemory, error)
 }
 
 // MessageStore persists queued agent collaboration messages.

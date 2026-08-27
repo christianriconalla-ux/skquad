@@ -33,6 +33,7 @@ type MemoryStore struct {
 	metering      map[string]*domain.MeteringEvent
 	auditLog      map[string]*domain.AuditEntry
 	tasks         map[string]*domain.Task
+	agentMemory   map[string]*domain.AgentMemory
 	messages      map[string]*domain.Message
 }
 
@@ -54,6 +55,7 @@ func NewMemoryStore() *MemoryStore {
 		metering:      map[string]*domain.MeteringEvent{},
 		auditLog:      map[string]*domain.AuditEntry{},
 		tasks:         map[string]*domain.Task{},
+		agentMemory:   map[string]*domain.AgentMemory{},
 		messages:      map[string]*domain.Message{},
 	}
 }
@@ -918,6 +920,62 @@ func (m *MemoryStore) ClaimNextTask(_ context.Context, agentID string) (*domain.
 	return cloneTask(candidate), nil
 }
 
+func (m *MemoryStore) CreateAgentMemory(_ context.Context, memory *domain.AgentMemory) (*domain.AgentMemory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.agents[memory.AgentID]; !ok {
+		return nil, ErrNotFound
+	}
+	if memory.SquadID != "" {
+		if _, ok := m.squads[memory.SquadID]; !ok {
+			return nil, ErrNotFound
+		}
+	}
+	if memory.SourceTaskID != "" {
+		if _, ok := m.tasks[memory.SourceTaskID]; !ok {
+			return nil, ErrNotFound
+		}
+	}
+	created := cloneAgentMemory(memory)
+	created.ID = uuid.NewString()
+	if len(created.Metadata) == 0 {
+		created.Metadata = []byte(`{}`)
+	}
+	created.CreatedAt = time.Now().UTC()
+	m.agentMemory[created.ID] = created
+	return cloneAgentMemory(created), nil
+}
+
+func (m *MemoryStore) ListAgentMemory(_ context.Context, agentID string, squadID string, limit int) ([]*domain.AgentMemory, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return nil, ErrNotFound
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	out := []*domain.AgentMemory{}
+	for _, item := range m.agentMemory {
+		if item.AgentID == agentID && (item.SquadID == "" || item.SquadID == squadID) {
+			out = append(out, cloneAgentMemory(item))
+		}
+	}
+	slices.SortFunc(out, func(a, b *domain.AgentMemory) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			if a.CreatedAt.After(b.CreatedAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (m *MemoryStore) CreateMessage(_ context.Context, msg *domain.Message) (*domain.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1057,6 +1115,15 @@ func cloneTask(t *domain.Task) *domain.Task {
 		return nil
 	}
 	v := *t
+	return &v
+}
+
+func cloneAgentMemory(memory *domain.AgentMemory) *domain.AgentMemory {
+	if memory == nil {
+		return nil
+	}
+	v := *memory
+	v.Metadata = slices.Clone(memory.Metadata)
 	return &v
 }
 

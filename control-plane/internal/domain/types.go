@@ -127,6 +127,18 @@ type Task struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
+// AgentMemory is a scoped long-term memory row for an agent. Squad-scoped
+// memory is opt-in by setting SquadID; otherwise the row is private to AgentID.
+type AgentMemory struct {
+	ID           string          `json:"id"`
+	AgentID      string          `json:"agent_id"`
+	SquadID      string          `json:"squad_id,omitempty"`
+	Content      string          `json:"content"`
+	SourceTaskID string          `json:"source_task_id,omitempty"`
+	Metadata     json.RawMessage `json:"metadata"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
 // MessageType identifies a queued agent collaboration message.
 type MessageType string
 

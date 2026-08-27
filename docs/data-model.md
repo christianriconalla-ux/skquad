@@ -321,13 +321,16 @@ CREATE INDEX idx_memory_embedding ON agent_memory
     USING ivfflat (embedding vector_cosine_ops);  -- tune lists for data size
 ```
 
-- **Per-agent** memory by default (`squad_id` null).
-- **Shared squad memory** when `squad_id` is set (opt-in, later).
+- **Per-agent** memory by default; runtime reads always constrain by `agent_id`.
+- `squad_id` scopes memories to a squad/task context. Shared squad memory is a
+  later policy decision, not implied by setting `squad_id` alone.
 - Semantic search via cosine similarity on `embedding`.
 
 Current implementation note: the embedded migration creates the pgvector-backed
-memory table and indexes, but runtime memory read/write APIs remain a follow-up
-implementation slice.
+memory table and indexes. The control plane now supports bounded recent-memory
+reads for task context and writes task completion summaries as memory rows when
+the runtime explicitly requests persistence. Semantic embedding writes/search
+and artifact storage are still follow-up implementation slices.
 
 ---
 

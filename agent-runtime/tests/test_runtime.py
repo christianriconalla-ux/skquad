@@ -7,8 +7,10 @@ from pathlib import Path
 from skquad_runtime.runtime import (
     ControlPlaneClient,
     LiteLLMTaskHandler,
+    RuntimeMemory,
     RuntimeResource,
     RuntimeTask,
+    RuntimeTaskContext,
     TaskResult,
     ToolResult,
     bootstrap_status,
@@ -196,6 +198,28 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(resources[0].manifest["package_ref"], "builtin://echo")
         self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/resources")
 
+    def test_control_plane_client_reads_task_context(self):
+        calls = []
+
+        def opener(req):
+            calls.append(req)
+            return FakeResponse(
+                200,
+                b'{"task":{"id":"task-1","squad_id":"squad-1","title":"T",'
+                b'"description":"D","status":"in-progress","assignee_agent_id":"agent-1"},'
+                b'"resources":[],"memory":[{"id":"mem-1","agent_id":"agent-1",'
+                b'"squad_id":"squad-1","content":"remember this","source_task_id":"task-0",'
+                b'"metadata":{"kind":"task_completion"}}],"limits":{"memory_limit":10}}',
+            )
+
+        client = ControlPlaneClient("http://control-plane", "agent-1", "credential", opener=opener)
+
+        context = client.task_context("task-1")
+
+        self.assertEqual(context.task.id, "task-1")
+        self.assertEqual(context.memory[0].content, "remember this")
+        self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/tasks/task-1/context")
+
     def test_poll_once_reports_idle_without_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             credential = Path(tmp) / "agent"
@@ -244,8 +268,22 @@ class RuntimeBootstrapTest(unittest.TestCase):
 
             self.assertEqual(task.id, "task-1")
             self.assertEqual(client.completed, [("task-1", "done")])
+            self.assertEqual(client.completion_summaries, [""])
             self.assertEqual(client.blocked, [])
             self.assertEqual(client.heartbeats, ["busy", "idle"])
+
+    def test_run_task_once_persists_handler_summary_as_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
+            handler = StaticTaskHandler(TaskResult(status="done", summary="Ship it."))
+
+            task = run_task_once(config, handler, client)
+
+            self.assertEqual(task.id, "task-1")
+            self.assertEqual(client.completed, [("task-1", "done")])
+            self.assertEqual(client.completion_summaries, ["Ship it."])
+            self.assertEqual(client.persist_memory, [True])
 
     def test_run_task_once_blocks_when_handler_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -371,6 +409,46 @@ class RuntimeBootstrapTest(unittest.TestCase):
             system_message = calls[0]["messages"][0]["content"]
             self.assertIn("Granted resources:", system_message)
             self.assertIn("tool | echo | Echo messages | plugin://echo | package=builtin://echo", system_message)
+
+    def test_litellm_handler_includes_task_context_memory_in_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
+                }
+            )
+            calls = []
+
+            def completion(**kwargs):
+                calls.append(kwargs)
+                return fake_completion("Ready for review.")
+
+            handler = LiteLLMTaskHandler(
+                completion=completion,
+                resources=None,
+            )
+
+            original = ControlPlaneClient.from_bootstrap
+            ControlPlaneClient.from_bootstrap = classmethod(
+                lambda cls, _config: FakeContextClient()
+            )
+            try:
+                result = handler.handle_task(fake_task("task-1"), config)
+            finally:
+                ControlPlaneClient.from_bootstrap = original
+
+            self.assertEqual(result.status, "in-review")
+            system_message = calls[0]["messages"][0]["content"]
+            self.assertIn("Relevant memory:", system_message)
+            self.assertIn("source_task=task-0 | Previous result", system_message)
 
     def test_litellm_handler_invokes_plugin_tool_calls(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -554,6 +632,8 @@ class FakeControlPlaneClient:
         self.claimed_task = claimed_task
         self.heartbeats = []
         self.completed = []
+        self.completion_summaries = []
+        self.persist_memory = []
         self.blocked = []
 
     def claim_task(self):
@@ -563,8 +643,10 @@ class FakeControlPlaneClient:
         self.heartbeats.append(status)
         return {}
 
-    def complete_task(self, task_id, status="in-review"):
+    def complete_task(self, task_id, status="in-review", summary="", persist_memory=False):
         self.completed.append((task_id, status))
+        self.completion_summaries.append(summary)
+        self.persist_memory.append(persist_memory)
         return fake_task(task_id, status=status)
 
     def block_task(self, task_id):
@@ -578,6 +660,25 @@ class StaticTaskHandler:
 
     def handle_task(self, _task, _config):
         return self.result
+
+
+class FakeContextClient:
+    def task_context(self, task_id):
+        return RuntimeTaskContext(
+            task=fake_task(task_id),
+            resources=[],
+            memory=[
+                RuntimeMemory(
+                    id="mem-1",
+                    agent_id="agent-1",
+                    squad_id="squad-1",
+                    content="Previous result",
+                    source_task_id="task-0",
+                    metadata={"kind": "task_completion"},
+                )
+            ],
+            limits={"memory_limit": 10},
+        )
 
 
 class RaisingTaskHandler:

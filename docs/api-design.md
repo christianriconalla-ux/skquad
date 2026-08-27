@@ -100,8 +100,9 @@ one-way verifier hash for runtime authentication.
 > | `GET` | `/api/v1/agents/me/tasks` | Tasks assigned to this agent. |
 > | `GET` | `/api/v1/agents/me/resources` | Active registry resources granted to this agent; secret refs are not returned. |
 > | `POST` | `/api/v1/agents/me/tasks/claim` | Idempotently claim the current `in-progress` task or the next assigned `todo` task. |
+> | `GET` | `/api/v1/agents/me/tasks/:id/context` | Return task-scoped context for an assigned task: task metadata, granted active resource descriptors, recent scoped memory, and payload limits. |
 > | `POST` | `/api/v1/agents/me/tasks/:id/start` | Mark a task `in-progress` (context reset). |
-> | `POST` | `/api/v1/agents/me/tasks/:id/complete` | Mark a task done / in-review. |
+> | `POST` | `/api/v1/agents/me/tasks/:id/complete` | Mark a task done / in-review; may include `{ summary, persist_memory }` to persist a bounded completion summary as agent memory. |
 > | `POST` | `/api/v1/agents/me/tasks/:id/block` | Mark a task `blocked`. |
 > | `POST` | `/api/v1/agents/me/heartbeat` | Report `idle`, `busy`, or `error`. |
 

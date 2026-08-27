@@ -609,6 +609,122 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	require.Contains(t, auditActions(audit), "task.complete")
 }
 
+func TestAgentRuntimeTaskContextIncludesScopedMemory(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	store := storage.NewMemoryStore()
+	handler := NewWithCRWriter(testConfig(), store, crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Context Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Context Agent",
+	}, http.StatusCreated, &agent)
+	var otherAgent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Other Agent",
+	}, http.StatusCreated, &otherAgent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+	var otherIdentity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+otherAgent.ID+"/identity", nil, http.StatusCreated, &otherIdentity)
+	otherCredential := crWriter.credentialTokens[otherIdentity.CredentialRef]
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Assemble context",
+		"description":       "Use scoped memory",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+
+	_, err := store.CreateAgentMemory(context.Background(), &domain.AgentMemory{
+		AgentID:      agent.ID,
+		SquadID:      squad.ID,
+		Content:      "Same squad memory",
+		SourceTaskID: task.ID,
+		Metadata:     json.RawMessage(`{"kind":"task_completion"}`),
+	})
+	require.NoError(t, err)
+	_, err = store.CreateAgentMemory(context.Background(), &domain.AgentMemory{
+		AgentID:  agent.ID,
+		Content:  "Private agent memory",
+		Metadata: json.RawMessage(`{"kind":"note"}`),
+	})
+	require.NoError(t, err)
+	_, err = store.CreateAgentMemory(context.Background(), &domain.AgentMemory{
+		AgentID:  otherAgent.ID,
+		SquadID:  squad.ID,
+		Content:  "Wrong agent memory",
+		Metadata: json.RawMessage(`{"kind":"note"}`),
+	})
+	require.NoError(t, err)
+
+	var payload struct {
+		Task   domain.Task          `json:"task"`
+		Memory []domain.AgentMemory `json:"memory"`
+		Limits map[string]int       `json:"limits"`
+	}
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodGet, "/api/v1/agents/me/tasks/"+task.ID+"/context?memory_limit=1", nil, http.StatusOK, &payload)
+
+	require.Equal(t, task.ID, payload.Task.ID)
+	require.Len(t, payload.Memory, 1)
+	require.NotEqual(t, otherAgent.ID, payload.Memory[0].AgentID)
+	require.Equal(t, 1, payload.Limits["memory_limit"])
+
+	var forbidden map[string]map[string]string
+	doAgentJSON(t, handler, otherAgent.ID, otherCredential, http.MethodGet, "/api/v1/agents/me/tasks/"+task.ID+"/context", nil, http.StatusForbidden, &forbidden)
+	require.Equal(t, "forbidden", forbidden["error"]["code"])
+}
+
+func TestAgentRuntimeCompletionCanPersistMemory(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	store := storage.NewMemoryStore()
+	handler := NewWithCRWriter(testConfig(), store, crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Completion Memory Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Completion Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Persist result",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+
+	var completed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
+		"status":         "done",
+		"summary":        "Durable completion summary",
+		"persist_memory": true,
+	}, http.StatusOK, &completed)
+	require.Equal(t, domain.TaskDone, completed.Status)
+
+	memories, err := store.ListAgentMemory(context.Background(), agent.ID, squad.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, memories, 1)
+	require.Equal(t, "Durable completion summary", memories[0].Content)
+	require.Equal(t, task.ID, memories[0].SourceTaskID)
+}
+
 func TestAssignedTaskMirrorsAgentBusyAndCompletionMirrorsIdle(t *testing.T) {
 	t.Parallel()
 

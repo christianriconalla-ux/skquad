@@ -87,6 +87,24 @@ class RuntimeResource:
 
 
 @dataclass(frozen=True)
+class RuntimeMemory:
+    id: str
+    agent_id: str
+    squad_id: str
+    content: str
+    source_task_id: str
+    metadata: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class RuntimeTaskContext:
+    task: RuntimeTask
+    resources: list[RuntimeResource]
+    memory: list[RuntimeMemory]
+    limits: Mapping[str, object]
+
+
+@dataclass(frozen=True)
 class TaskResult:
     status: str = "in-review"
     summary: str = ""
@@ -214,6 +232,10 @@ class ControlPlaneClient:
         payload = self._json("GET", "/api/v1/agents/me/resources", None)
         return [runtime_resource(item) for item in payload]
 
+    def task_context(self, task_id: str) -> RuntimeTaskContext:
+        payload = self._json("GET", f"/api/v1/agents/me/tasks/{task_id}/context", None)
+        return runtime_task_context(payload)
+
     def claim_task(self) -> RuntimeTask | None:
         payload = self._json("POST", "/api/v1/agents/me/tasks/claim", None, allow_empty=True)
         if payload is None:
@@ -224,8 +246,18 @@ class ControlPlaneClient:
         payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/start", None)
         return runtime_task(payload)
 
-    def complete_task(self, task_id: str, status: str = "in-review") -> RuntimeTask:
-        payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/complete", {"status": status})
+    def complete_task(
+        self,
+        task_id: str,
+        status: str = "in-review",
+        summary: str = "",
+        persist_memory: bool = False,
+    ) -> RuntimeTask:
+        payload = self._json(
+            "POST",
+            f"/api/v1/agents/me/tasks/{task_id}/complete",
+            {"status": status, "summary": summary, "persist_memory": persist_memory},
+        )
         return runtime_task(payload)
 
     def block_task(self, task_id: str) -> RuntimeTask:
@@ -282,6 +314,41 @@ def runtime_resource(payload: Mapping[str, object]) -> RuntimeResource:
     )
 
 
+def runtime_memory(payload: Mapping[str, object]) -> RuntimeMemory:
+    metadata = payload.get("metadata") or {}
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    return RuntimeMemory(
+        id=str(payload.get("id", "")),
+        agent_id=str(payload.get("agent_id", "")),
+        squad_id=str(payload.get("squad_id", "")),
+        content=str(payload.get("content", "")),
+        source_task_id=str(payload.get("source_task_id", "")),
+        metadata=metadata,
+    )
+
+
+def runtime_task_context(payload: Mapping[str, object]) -> RuntimeTaskContext:
+    task_payload = payload.get("task") or {}
+    if not isinstance(task_payload, Mapping):
+        task_payload = {}
+    resources = payload.get("resources") or []
+    if not isinstance(resources, list):
+        resources = []
+    memory = payload.get("memory") or []
+    if not isinstance(memory, list):
+        memory = []
+    limits = payload.get("limits") or {}
+    if not isinstance(limits, Mapping):
+        limits = {}
+    return RuntimeTaskContext(
+        task=runtime_task(task_payload),
+        resources=[runtime_resource(item) for item in resources if isinstance(item, Mapping)],
+        memory=[runtime_memory(item) for item in memory if isinstance(item, Mapping)],
+        limits=limits,
+    )
+
+
 class LiteLLMTaskHandler:
     def __init__(
         self,
@@ -309,10 +376,13 @@ class LiteLLMTaskHandler:
         if not model:
             raise RuntimeError("SKQUAD_DEFAULT_MODEL is required")
 
+        context = self.available_task_context(task, config)
+        resources = context.resources if context is not None else self.available_resources(config)
+        memories = context.memory if context is not None else []
         messages: list[dict[str, object]] = [
             {
                 "role": "system",
-                "content": system_prompt(config, self.available_resources(config)),
+                "content": system_prompt(config, resources, memories),
             },
             {
                 "role": "user",
@@ -377,6 +447,15 @@ class LiteLLMTaskHandler:
             return []
         self.resources = ControlPlaneClient.from_bootstrap(config).list_resources()
         return self.resources
+
+    def available_task_context(
+        self, task: RuntimeTask, config: BootstrapConfig
+    ) -> RuntimeTaskContext | None:
+        if self.resources is not None or not self.discover_resources:
+            return None
+        context = ControlPlaneClient.from_bootstrap(config).task_context(task.id)
+        self.resources = context.resources
+        return context
 
     def invoke_tool(self, call: ToolCall, config: BootstrapConfig) -> ToolResult:
         plugin = next((item for item in self.plugins if item.name == call.name), None)
@@ -472,7 +551,11 @@ def module_name(module: object) -> str:
     return str(getattr(module, "__name__", module.__class__.__name__))
 
 
-def system_prompt(config: BootstrapConfig, resources: list[RuntimeResource] | None = None) -> str:
+def system_prompt(
+    config: BootstrapConfig,
+    resources: list[RuntimeResource] | None = None,
+    memories: list[RuntimeMemory] | None = None,
+) -> str:
     role = config.role or "skquad agent"
     prompt = (
         f"You are {role}. Work on exactly one assigned task at a time. "
@@ -482,6 +565,8 @@ def system_prompt(config: BootstrapConfig, resources: list[RuntimeResource] | No
     )
     if resources:
         prompt += "\n\nGranted resources:\n" + "\n".join(resource_prompt_line(item) for item in resources)
+    if memories:
+        prompt += "\n\nRelevant memory:\n" + "\n".join(memory_prompt_line(item) for item in memories)
     return prompt
 
 
@@ -498,6 +583,12 @@ def resource_prompt_line(resource: RuntimeResource) -> str:
     if default_model:
         bits.append(f"default_model={default_model}")
     return "- " + " | ".join(bits)
+
+
+def memory_prompt_line(memory: RuntimeMemory) -> str:
+    source = f"source_task={memory.source_task_id}" if memory.source_task_id else "source=agent"
+    content = " ".join(memory.content.split())
+    return f"- {source} | {content}"
 
 
 def task_prompt(task: RuntimeTask) -> str:
@@ -611,7 +702,12 @@ def run_task_once(
     if result.status == "blocked":
         final_task = control_plane.block_task(task.id)
     else:
-        final_task = control_plane.complete_task(task.id, result.status)
+        final_task = control_plane.complete_task(
+            task.id,
+            result.status,
+            summary=result.summary,
+            persist_memory=bool(result.summary.strip()),
+        )
     control_plane.heartbeat("idle")
     return final_task
 
