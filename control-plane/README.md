@@ -53,8 +53,9 @@ Implemented slice:
 - `GET /api/v1/auth/me` with dev-mode principal provisioning
 - Squad CRUD under `/api/v1/squads`
 - Agent CRUD for squads
-- Agent identity create/rotate endpoints with generated credential Secret
-  material, stored verifier hashes, and public secret/key references
+- Agent identity create/rotate endpoints with generated credential and
+  virtual-key Secret material, stored credential verifier hashes, and public
+  secret references
 - Agent registry permission list/set endpoints
 - Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
   granted active resource discovery, task start/complete/block, and status
@@ -81,5 +82,5 @@ Implemented slice:
 - Assigned `todo`/`in-progress` task state mirrored into the `Agent` CR so the
   operator can scale an agent up or keep it warm while work remains
 
-Next slices are the full runtime task execution loop and idle-timeout-aware
-operator scale-down.
+Next slices are message/memory schema alignment, agent collaboration APIs, and
+runtime plugin/context integration.

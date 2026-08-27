@@ -41,6 +41,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(config.role, "coder")
         self.assertEqual(config.agent_credential_path, Path("/tmp/credentials/agent"))
         self.assertEqual(config.virtual_key_path, Path("/tmp/credentials/gateway"))
+        self.assertTrue(config.task_loop_enabled)
 
     def test_read_secret_value_prefers_known_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,10 +64,16 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.json()["missing_required"],
-            ["SKQUAD_AGENT_ID", "SKQUAD_SQUAD_ID"],
+            [
+                "SKQUAD_AGENT_ID",
+                "SKQUAD_SQUAD_ID",
+                "SKQUAD_DEFAULT_PROVIDER_ID",
+                "SKQUAD_CONTROL_PLANE_URL",
+                "SKQUAD_LLM_GATEWAY_URL",
+            ],
         )
 
-    def test_bootstrap_status_ready_with_required_config_and_credential(self):
+    def test_bootstrap_status_ready_with_required_task_loop_config_and_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
             credential_dir = Path(tmp) / "agent"
             credential_dir.mkdir()
@@ -78,8 +85,11 @@ class RuntimeBootstrapTest(unittest.TestCase):
                 {
                     "SKQUAD_AGENT_ID": "agent-1",
                     "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential_dir),
                     "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key_dir),
+                    "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
                 }
             )
 
@@ -88,6 +98,49 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertTrue(status.ready)
             self.assertTrue(status.credential_loaded)
             self.assertTrue(status.virtual_key_loaded)
+            self.assertTrue(status.task_loop_enabled)
+
+    def test_bootstrap_status_not_ready_without_task_loop_virtual_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential = Path(tmp) / "agent"
+            credential.write_text("agent-token", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(Path(tmp) / "missing-gateway"),
+                    "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                }
+            )
+
+            status = bootstrap_status(config)
+
+            self.assertFalse(status.ready)
+            self.assertTrue(status.credential_loaded)
+            self.assertFalse(status.virtual_key_loaded)
+
+    def test_bootstrap_status_ready_without_virtual_key_when_task_loop_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential = Path(tmp) / "agent"
+            credential.write_text("agent-token", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                    "SKQUAD_TASK_LOOP_ENABLED": "false",
+                }
+            )
+
+            status = bootstrap_status(config)
+
+            self.assertTrue(status.ready)
+            self.assertTrue(status.credential_loaded)
+            self.assertFalse(status.virtual_key_loaded)
+            self.assertFalse(status.task_loop_enabled)
 
     def test_control_plane_client_sends_agent_auth_headers(self):
         calls = []
@@ -144,6 +197,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     "SKQUAD_AGENT_ID": "agent-1",
                     "SKQUAD_SQUAD_ID": "squad-1",
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                    "SKQUAD_TASK_LOOP_ENABLED": "false",
                 }
             )
             client = FakeControlPlaneClient(claimed_task=None)
@@ -162,6 +216,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     "SKQUAD_AGENT_ID": "agent-1",
                     "SKQUAD_SQUAD_ID": "squad-1",
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                    "SKQUAD_TASK_LOOP_ENABLED": "false",
                 }
             )
             client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
@@ -439,6 +494,7 @@ def ready_config(tmp):
             "SKQUAD_AGENT_ID": "agent-1",
             "SKQUAD_SQUAD_ID": "squad-1",
             "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+            "SKQUAD_TASK_LOOP_ENABLED": "false",
         }
     )
 

@@ -232,12 +232,16 @@ variables:
 | `SKQUAD_IDLE_TIMEOUT` | Idle timeout string used for scale-to-zero behavior. |
 | `SKQUAD_CREDENTIALS_DIR` | Root directory for mounted agent credentials. |
 | `SKQUAD_AGENT_CREDENTIAL_PATH` | Mounted Secret directory or file for the agent credential. |
-| `SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH` | Mounted Secret directory or file for the gateway virtual key. |
+| `SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH` | Mounted Secret directory or file for the gateway virtual key. Required when the task loop is enabled. |
 | `SKQUAD_CONTROL_PLANE_URL` | Control-plane URL for task claim/status/heartbeat calls. |
 | `SKQUAD_LLM_GATEWAY_URL` | LLM gateway URL for model calls. |
+| `SKQUAD_TASK_LOOP_ENABLED` | Starts the runtime task loop when true. Defaults to true in the process entrypoint and is set true by the operator. |
 
 The runtime readiness check reports only booleans for secret presence; it never
-returns raw credential values.
+returns raw credential values. When the task loop is enabled, `/readyz` requires
+agent identity, control-plane URL, LLM gateway URL, default provider/model hint,
+agent credential, and LLM gateway virtual key. With the task loop disabled,
+readiness only requires the base agent identity and credential.
 
 Current implementation includes a small control-plane client, a `poll_once`
 claim/heartbeat primitive, a handler-driven `run_task_once` execution

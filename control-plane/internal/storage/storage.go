@@ -60,7 +60,7 @@ type AgentStore interface {
 
 	CreateAgentIdentity(ctx context.Context, i *domain.AgentIdentity) (*domain.AgentIdentity, error)
 	GetAgentIdentity(ctx context.Context, agentID string) (*domain.AgentIdentity, error)
-	RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string, credentialHash string) (*domain.AgentIdentity, error)
+	RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string, credentialHash string, virtualKeyRef string) (*domain.AgentIdentity, error)
 }
 
 // BoardStore persists Kanban boards.

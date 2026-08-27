@@ -32,6 +32,7 @@ class BootstrapConfig:
     virtual_key_path: Path
     control_plane_url: str
     llm_gateway_url: str
+    task_loop_enabled: bool
 
     @property
     def missing_required(self) -> list[str]:
@@ -40,6 +41,13 @@ class BootstrapConfig:
             missing.append("SKQUAD_AGENT_ID")
         if not self.squad_id:
             missing.append("SKQUAD_SQUAD_ID")
+        if self.task_loop_enabled:
+            if not self.default_provider_id:
+                missing.append("SKQUAD_DEFAULT_PROVIDER_ID")
+            if not self.control_plane_url:
+                missing.append("SKQUAD_CONTROL_PLANE_URL")
+            if not self.llm_gateway_url:
+                missing.append("SKQUAD_LLM_GATEWAY_URL")
         return missing
 
 
@@ -51,6 +59,7 @@ class BootstrapStatus:
     missing_required: list[str]
     credential_loaded: bool
     virtual_key_loaded: bool
+    task_loop_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -125,6 +134,7 @@ def load_bootstrap_config(environ: Mapping[str, str] | None = None) -> Bootstrap
         ),
         control_plane_url=env.get("SKQUAD_CONTROL_PLANE_URL", ""),
         llm_gateway_url=env.get("SKQUAD_LLM_GATEWAY_URL", ""),
+        task_loop_enabled=env_bool(env, "SKQUAD_TASK_LOOP_ENABLED", True),
     )
 
 
@@ -132,13 +142,17 @@ def bootstrap_status(config: BootstrapConfig) -> BootstrapStatus:
     missing = config.missing_required
     credential = read_secret_value(config.agent_credential_path)
     virtual_key = read_secret_value(config.virtual_key_path)
+    secret_ready = credential is not None and (
+        not config.task_loop_enabled or virtual_key is not None
+    )
     return BootstrapStatus(
-        ready=not missing and credential is not None,
+        ready=not missing and secret_ready,
         agent_id=config.agent_id,
         squad_id=config.squad_id,
         missing_required=missing,
         credential_loaded=credential is not None,
         virtual_key_loaded=virtual_key is not None,
+        task_loop_enabled=config.task_loop_enabled,
     )
 
 
@@ -561,6 +575,7 @@ def create_app(config: BootstrapConfig | None = None):
             "missing_required": status_result.missing_required,
             "credential_loaded": status_result.credential_loaded,
             "virtual_key_loaded": status_result.virtual_key_loaded,
+            "task_loop_enabled": status_result.task_loop_enabled,
         }
 
     return app
@@ -570,7 +585,7 @@ def main() -> None:
     import uvicorn
 
     config = load_bootstrap_config()
-    if env_bool(os.environ, "SKQUAD_TASK_LOOP_ENABLED", True):
+    if config.task_loop_enabled:
         poll_interval = float(os.environ.get("SKQUAD_TASK_POLL_INTERVAL_SECONDS", "5"))
         worker = threading.Thread(
             target=run_task_loop,

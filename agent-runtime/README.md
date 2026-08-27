@@ -21,8 +21,8 @@ agent-runtime/
 ## Current implementation
 
 - Loads bootstrap config from the operator-provided `SKQUAD_*` environment.
-- Reads mounted Kubernetes Secret directories for the agent credential and
-  optional LLM gateway virtual key without returning raw secret values.
+- Reads mounted Kubernetes Secret directories for the agent credential and LLM
+  gateway virtual key without returning raw secret values.
 - Exposes `/healthz` and `/readyz` through FastAPI.
 - Provides a small control-plane client for agent-authenticated task listing,
   resource discovery, claiming, completion/blocking, and idle/busy/error
@@ -37,6 +37,9 @@ agent-runtime/
 - Starts the task loop in the runtime process when `SKQUAD_TASK_LOOP_ENABLED`
   is true (the operator sets it true for agent pods) while still serving
   `/healthz` and `/readyz`.
+- Treats `/readyz` as an execution-readiness check: when the task loop is
+  enabled, required control-plane/gateway config plus both mounted Secret values
+  must be present.
 - Provides the `skquad-agent-runtime` console script.
 
 Inbox draining, dynamic plugin package loading, and memory store integration

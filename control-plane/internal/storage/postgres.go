@@ -374,15 +374,16 @@ func (p *PostgresStore) GetAgentIdentity(ctx context.Context, agentID string) (*
 	return scanAgentIdentity(row)
 }
 
-func (p *PostgresStore) RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string, credentialHash string) (*domain.AgentIdentity, error) {
+func (p *PostgresStore) RotateAgentIdentity(ctx context.Context, agentID string, credentialRef string, credentialHash string, virtualKeyRef string) (*domain.AgentIdentity, error) {
 	row := p.pool.QueryRow(ctx, `
 		UPDATE agent_identities
 		SET credential_ref = $2,
 		    credential_hash = $3,
+		    virtual_key_ref = $4,
 		    rotated_at = now()
 		WHERE agent_id = $1
 		RETURNING id::text, agent_id::text, credential_ref, credential_hash, coalesce(virtual_key_ref, ''), created_by::text, created_at, rotated_at
-	`, agentID, credentialRef, credentialHash)
+	`, agentID, credentialRef, credentialHash, nullableText(virtualKeyRef))
 	return scanAgentIdentity(row)
 }
 

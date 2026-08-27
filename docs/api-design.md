@@ -72,8 +72,9 @@
 | `PUT` | `/api/v1/agents/:id/permissions` | Set the agent's resource permissions (owner). |
 
 Identity responses expose credential and virtual-key references only. Raw agent
-credential material is written to the configured Secret backend and is not
-returned by the API.
+credential and gateway virtual-key material is written to the configured Secret
+backend and is not returned by the API. The control plane stores only the
+one-way verifier hash for runtime authentication.
 
 ---
 

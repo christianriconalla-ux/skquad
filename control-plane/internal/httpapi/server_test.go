@@ -331,7 +331,9 @@ func TestAgentIdentityCreateAndRotate(t *testing.T) {
 	require.NotEmpty(t, identity.ID)
 	require.Equal(t, agent.ID, identity.AgentID)
 	require.Contains(t, identity.CredentialRef, "k8s://"+squad.Namespace+"/agent-"+agent.ID+"-credential-")
-	require.Equal(t, "llm-gateway://virtual-keys/agent-"+agent.ID, identity.VirtualKeyRef)
+	require.Contains(t, identity.VirtualKeyRef, "k8s://"+squad.Namespace+"/agent-"+agent.ID+"-virtual-key-")
+	require.NotEmpty(t, crWriter.credentialTokens[identity.CredentialRef])
+	require.NotEmpty(t, crWriter.credentialTokens[identity.VirtualKeyRef])
 
 	var conflict map[string]map[string]string
 	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusConflict, &conflict)
@@ -342,7 +344,9 @@ func TestAgentIdentityCreateAndRotate(t *testing.T) {
 	require.Equal(t, identity.ID, rotated.ID)
 	require.NotEqual(t, identity.CredentialRef, rotated.CredentialRef)
 	require.False(t, rotated.RotatedAt.IsZero())
-	require.Equal(t, identity.VirtualKeyRef, rotated.VirtualKeyRef)
+	require.NotEqual(t, identity.VirtualKeyRef, rotated.VirtualKeyRef)
+	require.NotEmpty(t, crWriter.credentialTokens[rotated.CredentialRef])
+	require.NotEmpty(t, crWriter.credentialTokens[rotated.VirtualKeyRef])
 
 	var audit []domain.AuditEntry
 	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
@@ -354,6 +358,8 @@ func TestAgentIdentityCreateAndRotate(t *testing.T) {
 		"upsert-agent:" + agent.ID,
 		"upsert-agent:" + agent.ID,
 	}, crWriter.ops)
+	require.Contains(t, crWriter.deletedCredentialRefs, identity.CredentialRef)
+	require.Contains(t, crWriter.deletedCredentialRefs, identity.VirtualKeyRef)
 }
 
 func TestAgentPermissionsSetAndList(t *testing.T) {
@@ -775,9 +781,10 @@ func auditActions(entries []domain.AuditEntry) []string {
 }
 
 type fakeCRWriter struct {
-	ops              []string
-	agentStatuses    []domain.AgentStatus
-	credentialTokens map[string]string
+	ops                   []string
+	agentStatuses         []domain.AgentStatus
+	credentialTokens      map[string]string
+	deletedCredentialRefs []string
 }
 
 func (f *fakeCRWriter) UpsertSquad(_ context.Context, squad *domain.Squad) error {
@@ -810,6 +817,7 @@ func (f *fakeCRWriter) WriteAgentCredential(_ context.Context, credentialRef str
 }
 
 func (f *fakeCRWriter) DeleteAgentCredential(_ context.Context, credentialRef string) error {
+	f.deletedCredentialRefs = append(f.deletedCredentialRefs, credentialRef)
 	if f.credentialTokens != nil {
 		delete(f.credentialTokens, credentialRef)
 	}

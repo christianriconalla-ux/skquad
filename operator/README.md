@@ -29,8 +29,8 @@ operator/
 - First `Agent` reconciler: resolves the owning squad namespace, creates/updates
   the agent Deployment, scales up from `desiredActive`, waits for
   `status.idleSince + spec.idleTimeout` before scaling inactive agents to zero,
-  uses the squad agent ServiceAccount, mounts optional agent
-  credential/virtual-key Secrets, passes runtime bootstrap env vars including
+	  uses the squad agent ServiceAccount, mounts agent credential/virtual-key
+	  Secrets when the Agent CR names them, passes runtime bootstrap env vars including
   control-plane/gateway URLs, enables the runtime task loop, configures
   `/healthz` and `/readyz` probes, and writes basic ready status
 - Helm CRDs for `squads.skquad.io` and `agents.skquad.io`

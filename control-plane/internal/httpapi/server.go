@@ -955,7 +955,7 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		AgentID:        agent.ID,
 		CredentialRef:  generatedCredentialRef(squad.Namespace, agent.ID),
 		CredentialHash: "",
-		VirtualKeyRef:  generatedVirtualKeyRef(agent.ID),
+		VirtualKeyRef:  generatedVirtualKeyRef(squad.Namespace, agent.ID),
 		CreatedBy:      u.ID,
 	}
 	credential, err := generateCredential()
@@ -963,14 +963,25 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to generate agent credential")
 		return
 	}
+	virtualKey, err := generateCredential()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to generate LLM gateway virtual key")
+		return
+	}
 	identity.CredentialHash = hashCredential(credential)
 	if err := s.crWriter.WriteAgentCredential(r.Context(), identity.CredentialRef, agent.ID, credential); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent credential secret")
 		return
 	}
+	if err := s.crWriter.WriteAgentCredential(r.Context(), identity.VirtualKeyRef, agent.ID, virtualKey); err != nil {
+		_ = s.crWriter.DeleteAgentCredential(r.Context(), identity.CredentialRef)
+		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent virtual-key secret")
+		return
+	}
 	created, err := s.store.CreateAgentIdentity(r.Context(), identity)
 	if err != nil {
 		_ = s.crWriter.DeleteAgentCredential(r.Context(), identity.CredentialRef)
+		_ = s.crWriter.DeleteAgentCredential(r.Context(), identity.VirtualKeyRef)
 		writeStorageError(w, err)
 		return
 	}
@@ -1002,18 +1013,31 @@ func (s *Server) rotateAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to generate agent credential")
 		return
 	}
+	virtualKey, err := generateCredential()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to generate LLM gateway virtual key")
+		return
+	}
 	credentialRef := generatedCredentialRef(squad.Namespace, agent.ID)
+	virtualKeyRef := generatedVirtualKeyRef(squad.Namespace, agent.ID)
 	if err := s.crWriter.WriteAgentCredential(r.Context(), credentialRef, agent.ID, credential); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent credential secret")
 		return
 	}
-	identity, err := s.store.RotateAgentIdentity(r.Context(), agent.ID, credentialRef, hashCredential(credential))
+	if err := s.crWriter.WriteAgentCredential(r.Context(), virtualKeyRef, agent.ID, virtualKey); err != nil {
+		_ = s.crWriter.DeleteAgentCredential(r.Context(), credentialRef)
+		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent virtual-key secret")
+		return
+	}
+	identity, err := s.store.RotateAgentIdentity(r.Context(), agent.ID, credentialRef, hashCredential(credential), virtualKeyRef)
 	if err != nil {
 		_ = s.crWriter.DeleteAgentCredential(r.Context(), credentialRef)
+		_ = s.crWriter.DeleteAgentCredential(r.Context(), virtualKeyRef)
 		writeStorageError(w, err)
 		return
 	}
 	_ = s.crWriter.DeleteAgentCredential(r.Context(), existing.CredentialRef)
+	_ = s.crWriter.DeleteAgentCredential(r.Context(), existing.VirtualKeyRef)
 	if err := s.crWriter.UpsertAgent(r.Context(), agent, identity); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
 		return
@@ -1867,8 +1891,8 @@ func generatedCredentialRef(namespace, agentID string) string {
 	return fmt.Sprintf("k8s://%s/agent-%s-credential-%s", namespace, agentID, uuid.NewString()[:8])
 }
 
-func generatedVirtualKeyRef(agentID string) string {
-	return "llm-gateway://virtual-keys/agent-" + agentID
+func generatedVirtualKeyRef(namespace, agentID string) string {
+	return fmt.Sprintf("k8s://%s/agent-%s-virtual-key-%s", namespace, agentID, uuid.NewString()[:8])
 }
 
 func bearerToken(authorization string) string {
