@@ -23,8 +23,9 @@ operator/
 - Scheme registration for `skquad.io/v1`
 - controller-runtime manager entrypoint with health/readiness probes
 - First `Squad` reconciler: creates/labels the configured squad namespace,
-  creates the `skquad-agent` ServiceAccount, default-deny NetworkPolicy, starter
-  ResourceQuota, and records basic ready status
+  creates the `skquad-agent` ServiceAccount, default-deny NetworkPolicy, DNS and
+  platform egress allow policies, starter ResourceQuota, and records basic ready
+  status
 - First `Agent` reconciler: resolves the owning squad namespace, creates/updates
   the agent Deployment, sets scale-to-zero replicas from `desiredActive`, uses
   the squad agent ServiceAccount, mounts optional agent credential/virtual-key
@@ -33,5 +34,6 @@ operator/
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
   and Deployment
 
-Next slices are richer network egress policies, control-plane/runtime chart
-templates, and the agent runtime bootstrap contract.
+Next slices are control-plane/runtime chart templates, configurable egress
+policy generation from registry grants, and the agent runtime bootstrap
+contract.

@@ -77,6 +77,31 @@ func TestSquadReconcilerCreatesNamespace(t *testing.T) {
 		t.Fatalf("policy types = %#v, want %#v", got, want)
 	}
 
+	var dnsPolicy networkingv1.NetworkPolicy
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: dnsEgressPolicyName, Namespace: squad.Spec.Namespace}, &dnsPolicy); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(dnsPolicy.Spec.Egress); got != 1 {
+		t.Fatalf("dns policy egress rules = %d, want 1", got)
+	}
+	if got := len(dnsPolicy.Spec.Egress[0].Ports); got != 2 {
+		t.Fatalf("dns policy ports = %d, want 2", got)
+	}
+	if got := dnsPolicy.Spec.Egress[0].To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; got != "kube-system" {
+		t.Fatalf("dns egress namespace = %q, want kube-system", got)
+	}
+
+	var platformPolicy networkingv1.NetworkPolicy
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: platformEgressPolicyName, Namespace: squad.Spec.Namespace}, &platformPolicy); err != nil {
+		t.Fatal(err)
+	}
+	if got := platformPolicy.Spec.Egress[0].To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; got != squad.Namespace {
+		t.Fatalf("platform egress namespace = %q, want %q", got, squad.Namespace)
+	}
+	if got := len(platformPolicy.Spec.Egress[0].Ports); got != 5 {
+		t.Fatalf("platform egress ports = %d, want 5", got)
+	}
+
 	var quota corev1.ResourceQuota
 	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: defaultSquadQuotaName, Namespace: squad.Spec.Namespace}, &quota); err != nil {
 		t.Fatal(err)

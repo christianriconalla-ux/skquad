@@ -98,6 +98,9 @@ When the operator sees a `Squad` CR:
    - **NetworkPolicy** — isolate the namespace (default-deny; allow only the
      paths agents need: LLM gateway, message queue/Postgres, permitted
      resources).
+     The starter reconciler creates default deny, DNS egress to `kube-system`,
+     and platform egress back to the control-plane namespace on HTTP, gateway,
+     and Postgres ports. Registry-derived egress rules come later.
    - **ResourceQuota** — cap CPU/memory per squad (configurable).
    - **ServiceAccount** — for the squad's agents.
 3. **Status transitions:**
@@ -216,6 +219,8 @@ charts/skquad/
   - The **LLM gateway** (control plane).
   - **Postgres** (message queue + memory) — or via the control plane.
   - **Permitted resource endpoints** (KBs, workspaces) — as granted.
+- The current starter policy allows DNS plus platform namespace egress; granted
+  external resource endpoints will be rendered into additional policies later.
 - **No direct pod-to-pod** between squads — cross-squad interaction goes through
   the **control plane / message queue** (which enforces access grants).
 - The **control plane** is reachable by squad agents (for API + gateway +

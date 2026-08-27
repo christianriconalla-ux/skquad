@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -22,6 +23,8 @@ const (
 	managedBy                 = "skquad-operator"
 	agentServiceAccountName   = "skquad-agent"
 	defaultDenyPolicyName     = "default-deny"
+	dnsEgressPolicyName       = "allow-dns-egress"
+	platformEgressPolicyName  = "allow-skquad-platform-egress"
 	defaultSquadQuotaName     = "skquad-squad-quota"
 	defaultSquadPodQuota      = "20"
 	defaultSquadCPURequests   = "4"
@@ -57,6 +60,12 @@ func (r *SquadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 	if err := r.ensureDefaultDenyNetworkPolicy(ctx, &squad, namespaceName); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureDNSEgressNetworkPolicy(ctx, &squad, namespaceName); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensurePlatformEgressNetworkPolicy(ctx, &squad, namespaceName); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.ensureResourceQuota(ctx, &squad, namespaceName); err != nil {
@@ -111,6 +120,69 @@ func (r *SquadReconciler) ensureDefaultDenyNetworkPolicy(ctx context.Context, sq
 	return err
 }
 
+func (r *SquadReconciler) ensureDNSEgressNetworkPolicy(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: dnsEgressPolicyName, Namespace: namespace},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
+		ensureSquadLabels(&policy.Labels, squad)
+		policy.Spec = networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": "kube-system",
+						},
+					},
+				}},
+				Ports: []networkingv1.NetworkPolicyPort{
+					networkPolicyPort(corev1.ProtocolUDP, 53),
+					networkPolicyPort(corev1.ProtocolTCP, 53),
+				},
+			}},
+		}
+		return nil
+	})
+	return err
+}
+
+func (r *SquadReconciler) ensurePlatformEgressNetworkPolicy(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: platformEgressPolicyName, Namespace: namespace},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
+		ensureSquadLabels(&policy.Labels, squad)
+		policy.Spec = networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"kubernetes.io/metadata.name": squad.Namespace,
+						},
+					},
+				}},
+				Ports: []networkingv1.NetworkPolicyPort{
+					networkPolicyPort(corev1.ProtocolTCP, 80),
+					networkPolicyPort(corev1.ProtocolTCP, 443),
+					networkPolicyPort(corev1.ProtocolTCP, 8000),
+					networkPolicyPort(corev1.ProtocolTCP, 8080),
+					networkPolicyPort(corev1.ProtocolTCP, 5432),
+				},
+			}},
+		}
+		return nil
+	})
+	return err
+}
+
 func (r *SquadReconciler) ensureResourceQuota(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
 	quota := &corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{Name: defaultSquadQuotaName, Namespace: namespace},
@@ -127,6 +199,13 @@ func (r *SquadReconciler) ensureResourceQuota(ctx context.Context, squad *skquad
 		return nil
 	})
 	return err
+}
+
+func networkPolicyPort(protocol corev1.Protocol, port int) networkingv1.NetworkPolicyPort {
+	return networkingv1.NetworkPolicyPort{
+		Protocol: &protocol,
+		Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: int32(port)},
+	}
 }
 
 // SetupWithManager registers the Squad controller with a controller-runtime
