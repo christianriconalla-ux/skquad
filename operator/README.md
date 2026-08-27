@@ -14,3 +14,12 @@ operator/
 ├── internal/api/v1/       # Squad, Agent CRDs
 └── go.mod
 ```
+
+## Current implementation
+
+- `skquad.io/v1` `Squad` and `Agent` Kubernetes API types
+- List types for both resources
+- `runtime.Object` `DeepCopyObject` support for manager/client registration
+
+Next slices are scheme registration, controller-runtime manager startup, and
+the Squad/Agent reconcilers.
