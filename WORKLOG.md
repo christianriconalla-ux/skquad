@@ -314,3 +314,10 @@
 - files changed: `.github/workflows/ci.yml`, `llm-gateway/Dockerfile`, `llm-gateway/README.md`, `charts/skquad/README.md`, `docs/ci-cd.md`, `WORKLOG.md`.
 - command/test run: `podman build -t localhost/skquad-llm-gateway:prisma-fetch ./llm-gateway`; disposable Postgres-backed Prisma connection smoke test; disposable Postgres-backed LiteLLM startup/readiness smoke test.
 - result: Gateway image now fetches Prisma query-engine binaries into the non-root runtime user's cache during build. CI now feeds Python heredocs with interactive stdin, verifies the generated Prisma client can connect to Postgres, and starts the actual LiteLLM proxy against Postgres until readiness passes.
+
+## 2026-08-28 01:28:00 ACST
+
+- objective: Remove ArgoCD StatefulSet drift for the bundled development Postgres chart.
+- files changed: `charts/skquad/templates/postgres-statefulset.yaml`, `WORKLOG.md`.
+- command/test run: `helm lint charts/skquad`; `helm template skquad charts/skquad --namespace skquad-system`; Kubernetes server-side dry-run against the lab API.
+- result: The Postgres StatefulSet template now renders Kubernetes default pod fields, termination message fields, PVC template `apiVersion`/`kind`, and `volumeMode` so ArgoCD server-side apply comparison is stable.
