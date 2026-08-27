@@ -27,13 +27,15 @@ operator/
   platform egress allow policies, starter ResourceQuota, and records basic ready
   status
 - First `Agent` reconciler: resolves the owning squad namespace, creates/updates
-  the agent Deployment, sets scale-to-zero replicas from `desiredActive`, uses
-  the squad agent ServiceAccount, mounts optional agent credential/virtual-key
-  Secrets, passes runtime bootstrap env vars including control-plane/gateway
-  URLs, configures `/healthz` and `/readyz` probes, and writes basic ready status
+  the agent Deployment, scales up from `desiredActive`, waits for
+  `status.idleSince + spec.idleTimeout` before scaling inactive agents to zero,
+  uses the squad agent ServiceAccount, mounts optional agent
+  credential/virtual-key Secrets, passes runtime bootstrap env vars including
+  control-plane/gateway URLs, configures `/healthz` and `/readyz` probes, and
+  writes basic ready status
 - Helm CRDs for `squads.skquad.io` and `agents.skquad.io`
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
   and Deployment
 
-Next slices are idle-timeout-aware operator scale-down and configurable egress
+Next slices are the full runtime task execution loop and configurable egress
 policy generation from registry grants.

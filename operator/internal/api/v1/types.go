@@ -92,6 +92,7 @@ type AgentStatus struct {
 	Ready           bool               `json:"ready,omitempty"`
 	Phase           string             `json:"phase,omitempty"`
 	Reason          string             `json:"reason,omitempty"`
+	IdleSince       metav1.Time        `json:"idleSince,omitempty"`
 	UpdatedAt       metav1.Time        `json:"updatedAt,omitempty"`
 	Conditions      []metav1.Condition `json:"conditions,omitempty"`
 }

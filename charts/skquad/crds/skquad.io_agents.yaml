@@ -73,6 +73,9 @@ spec:
                   type: string
                 reason:
                   type: string
+                idleSince:
+                  type: string
+                  format: date-time
                 updatedAt:
                   type: string
                   format: date-time

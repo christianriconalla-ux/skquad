@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -166,6 +167,95 @@ func TestAgentReconcilerScalesInactiveAgentToZero(t *testing.T) {
 	}
 }
 
+func TestAgentReconcilerWaitsForIdleTimeoutBeforeScaleDown(t *testing.T) {
+	t.Parallel()
+
+	scheme := testScheme(t)
+	replicas := int32(1)
+	idleSince := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+	agent := &skquadv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-idle-wait", Namespace: "skquad-system"},
+		Spec: skquadv1.AgentSpec{
+			AgentID:     "55555555-5555-5555-5555-555555555555",
+			SquadID:     "66666666-6666-6666-6666-666666666666",
+			IdleTimeout: "5m",
+		},
+		Status: skquadv1.AgentStatus{IdleSince: idleSince},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: "squad-" + agent.Spec.SquadID},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(agent, deployment).
+		Build()
+	reconciler := &AgentReconciler{Client: k8sClient, Scheme: scheme}
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var updated appsv1.Deployment
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: agent.Name, Namespace: deployment.Namespace}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 1 {
+		t.Fatalf("deployment replicas = %v, want 1 during idle timeout", updated.Spec.Replicas)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("requeueAfter = %v, want positive idle timeout wait", result.RequeueAfter)
+	}
+}
+
+func TestAgentReconcilerScalesDownAfterIdleTimeout(t *testing.T) {
+	t.Parallel()
+
+	scheme := testScheme(t)
+	replicas := int32(1)
+	agent := &skquadv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-idle-expired", Namespace: "skquad-system"},
+		Spec: skquadv1.AgentSpec{
+			AgentID:     "77777777-7777-7777-7777-777777777777",
+			SquadID:     "88888888-8888-8888-8888-888888888888",
+			IdleTimeout: "5m",
+		},
+		Status: skquadv1.AgentStatus{IdleSince: metav1.NewTime(time.Now().Add(-10 * time.Minute))},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: "squad-" + agent.Spec.SquadID},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(agent, deployment).
+		Build()
+	reconciler := &AgentReconciler{Client: k8sClient, Scheme: scheme}
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var updated appsv1.Deployment
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: agent.Name, Namespace: deployment.Namespace}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 0 {
+		t.Fatalf("deployment replicas = %v, want 0 after idle timeout", updated.Spec.Replicas)
+	}
+	if result.Requeue || result.RequeueAfter != 0 {
+		t.Fatalf("result = %#v, want no requeue after scale down", result)
+	}
+}
+
 func envValue(env []corev1.EnvVar, name string) string {
 	for _, item := range env {
 		if item.Name == name {
@@ -173,4 +263,17 @@ func envValue(env []corev1.EnvVar, name string) string {
 		}
 	}
 	return ""
+}
+
+func testScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := skquadv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return scheme
 }

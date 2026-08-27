@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,15 +42,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	replicas := int32(0)
-	if agent.Spec.DesiredActive {
-		replicas = 1
-	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: namespace},
 	}
+	replicas := desiredReplicas(&agent, deployment, time.Now)
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		replicas = desiredReplicas(&agent, deployment, time.Now)
 		labels := agentLabels(&agent)
 		ensureAgentLabels(&deployment.Labels, &agent)
 		deployment.Spec.Replicas = &replicas
@@ -98,12 +97,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	agent.Status.Replicas = replicas
 	agent.Status.Ready = true
 	agent.Status.Phase = "Ready"
-	agent.Status.Reason = "DeploymentReady"
+	agent.Status.Reason = agentReadyReason(&agent, replicas)
+	updateIdleSince(&agent, time.Now)
 	agent.Status.UpdatedAt = metav1.Now()
 	setCondition(&agent.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
-		Reason:             "DeploymentReady",
+		Reason:             agent.Status.Reason,
 		Message:            fmt.Sprintf("Deployment %s/%s is ready", namespace, deployment.Name),
 		ObservedGeneration: agent.Generation,
 	})
@@ -111,7 +111,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	return idleRequeue(&agent, replicas, time.Now), nil
 }
 
 // SetupWithManager registers the Agent controller with a controller-runtime
@@ -161,6 +161,76 @@ func agentImage(agent *skquadv1.Agent) string {
 		return defaultAgentImage
 	}
 	return agent.Spec.Image
+}
+
+func desiredReplicas(agent *skquadv1.Agent, deployment *appsv1.Deployment, now func() time.Time) int32 {
+	if agent.Spec.DesiredActive {
+		return 1
+	}
+	current := int32(0)
+	if deployment.Spec.Replicas != nil {
+		current = *deployment.Spec.Replicas
+	}
+	if current == 0 {
+		return 0
+	}
+	timeout := idleTimeout(agent)
+	if timeout <= 0 {
+		return 0
+	}
+	if agent.Status.IdleSince.IsZero() {
+		return 1
+	}
+	if now().Sub(agent.Status.IdleSince.Time) < timeout {
+		return 1
+	}
+	return 0
+}
+
+func updateIdleSince(agent *skquadv1.Agent, now func() time.Time) {
+	if agent.Spec.DesiredActive {
+		agent.Status.IdleSince = metav1.Time{}
+		return
+	}
+	if agent.Status.IdleSince.IsZero() {
+		agent.Status.IdleSince = metav1.NewTime(now().UTC())
+	}
+}
+
+func idleRequeue(agent *skquadv1.Agent, replicas int32, now func() time.Time) ctrl.Result {
+	if agent.Spec.DesiredActive || replicas == 0 || agent.Status.IdleSince.IsZero() {
+		return ctrl.Result{}
+	}
+	timeout := idleTimeout(agent)
+	if timeout <= 0 {
+		return ctrl.Result{}
+	}
+	remaining := timeout - now().Sub(agent.Status.IdleSince.Time)
+	if remaining <= 0 {
+		return ctrl.Result{Requeue: true}
+	}
+	return ctrl.Result{RequeueAfter: remaining}
+}
+
+func idleTimeout(agent *skquadv1.Agent) time.Duration {
+	if agent.Spec.IdleTimeout == "" {
+		return 0
+	}
+	timeout, err := time.ParseDuration(agent.Spec.IdleTimeout)
+	if err != nil {
+		return 0
+	}
+	return timeout
+}
+
+func agentReadyReason(agent *skquadv1.Agent, replicas int32) string {
+	if agent.Spec.DesiredActive {
+		return "DeploymentReady"
+	}
+	if replicas > 0 {
+		return "IdleTimeoutWaiting"
+	}
+	return "ScaledToZero"
 }
 
 func httpProbe(path string) *corev1.Probe {
