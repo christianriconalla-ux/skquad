@@ -3,9 +3,14 @@
 > **Status:** Draft v1 · **Decision:** [ADR-0002](adr/0002-llm-gateway.md)
 >
 > The LLM gateway is the **single, model-agnostic endpoint** that **all agent
-> LLM calls** flow through. It is the enforcement point for **metering, cost,
-> BYOM routing, and agent permissions**. It is implemented with the **LiteLLM
-> proxy**.
+> LLM calls** flow through. It is intended to be the enforcement point for
+> **metering, cost, BYOM routing, and agent permissions**. It is implemented
+> with the **LiteLLM proxy**.
+>
+> The LiteLLM proxy, virtual-key provisioning, and metering callback path are
+> implemented. Key refresh/revocation and full permission/budget lifecycle
+> hardening remain follow-up work; see
+> [`implementation-status.md`](implementation-status.md).
 
 ---
 

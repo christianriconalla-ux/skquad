@@ -5,7 +5,14 @@
 > skquad has **two kinds of principals**: **human users** (OIDC) and **agents**
 > (owner-created identities). Authorization is **two-layer RBAC**: **user RBAC**
 > (managed by the platform admin) and **agent permissions** (managed by the
-> squad owner). All significant actions are **audited**.
+> squad owner). Significant actions are intended to be **audited**; the current
+> implementation records audit events for many mutation paths, with stronger
+> transactional guarantees still tracked as follow-up work.
+>
+> This is the intended security model. Remaining implementation gaps around
+> stable OIDC subjects, fine-grained grant scopes, audit guarantees, and RBAC
+> reduction are tracked in
+> [`implementation-status.md`](implementation-status.md).
 
 ---
 

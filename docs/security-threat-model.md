@@ -6,6 +6,10 @@
 > the **assets**, **trust boundaries**, **threats**, and **mitigations**. It
 > complements [identity-security.md](identity-security.md) (the controls) and
 > [deployment-operator.md](deployment-operator.md) (isolation).
+>
+> This is the target threat model, not a production certification. Open
+> implementation gaps are tracked in
+> [`implementation-status.md`](implementation-status.md).
 
 ---
 

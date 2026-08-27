@@ -5,6 +5,10 @@
 > Single **Postgres** store (with **pgvector**) for domain data, agent
 > long-term memory, audit log, metering, and the v1 message queue. This is the
 > physical schema behind the [domain model](domain-model.md).
+>
+> The current schema is implemented as embedded SQL plus idempotent startup
+> execution. A migration ledger and safer multi-replica migration locking remain
+> follow-up work; see [`implementation-status.md`](implementation-status.md).
 
 ---
 

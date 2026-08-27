@@ -102,8 +102,11 @@ Important gaps remain:
   network-policy hardening are not complete.
 
 The detailed source-of-truth requirements are in
-[`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md). Component READMEs describe the
-implemented slice and their next steps.
+[`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md). The
+[`implementation status ledger`](docs/implementation-status.md) reconciles the
+design docs with what is implemented, what is in review, and what remains
+deferred. Component READMEs describe the implemented slice and their next
+steps.
 
 ## Development deployment
 
@@ -183,7 +186,7 @@ suite and cluster-required checks.
 | Area | Documents |
 | --- | --- |
 | Product scope | [Requirements](docs/REQUIREMENTS.md), [domain model](docs/domain-model.md) |
-| System design | [Architecture](docs/ARCHITECTURE.md), [data model](docs/data-model.md), [API design](docs/api-design.md), [ADRs](docs/adr/) |
+| System design | [Architecture](docs/ARCHITECTURE.md), [data model](docs/data-model.md), [API design](docs/api-design.md), [implementation status](docs/implementation-status.md), [ADRs](docs/adr/) |
 | Agent execution | [Runtime](docs/agent-runtime.md), [task lifecycle](docs/kanban-task-lifecycle.md), [messaging](docs/collaboration-messaging.md), [plugins](docs/plugin-architecture.md) |
 | Platform services | [LLM gateway](docs/llm-gateway.md), [resource registry](docs/resource-registry.md), [operator and deployment](docs/deployment-operator.md), [operator runbook](docs/operator-runbook.md) |
 | Operations and security | [Identity and security](docs/identity-security.md), [threat model](docs/security-threat-model.md), [observability and metering](docs/observability-metering.md), [CI/CD](docs/ci-cd.md), [testing strategy](docs/testing-strategy.md) |

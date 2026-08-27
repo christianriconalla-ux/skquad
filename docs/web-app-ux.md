@@ -6,6 +6,9 @@
 > The web app is a **SPA** (React / Next.js) — the primary interface for users.
 > It is optimised for **simplicity**: the onboarding path is a few clicks, and
 > the **Kanban board** is the centre of daily use.
+>
+> First-pass workflows are implemented; richer browser UX remains in progress.
+> See [`implementation-status.md`](implementation-status.md).
 
 ---
 

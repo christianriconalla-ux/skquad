@@ -5,6 +5,10 @@
 > Each squad has a **Kanban board** — the **primary work surface** for the
 > squad. **Tasks** are the unit of work. Agents **pick up tasks** assigned to
 > them; their **working context resets before each new task**.
+>
+> Basic task assignment, claim, status, and runtime context are implemented.
+> Leases, fencing tokens, and first-class durable task results remain follow-up
+> work; see [`implementation-status.md`](implementation-status.md).
 
 ---
 

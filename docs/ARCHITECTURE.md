@@ -4,6 +4,10 @@
 >
 > This is the top-level architecture. Detailed designs live in the linked
 > documents. Key decisions are recorded in [`adr/`](adr/).
+>
+> Implementation status is tracked in
+> [`implementation-status.md`](implementation-status.md); this architecture is
+> partially implemented and still has documented hardening gaps.
 
 ---
 

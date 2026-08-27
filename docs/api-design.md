@@ -4,8 +4,13 @@
 >
 > The **API server** exposes a **REST API** for the web app and external
 > clients. It is the single entry point: it performs **authN** (OIDC JWT),
-> **authZ** (user RBAC + access grants), and all domain CRUD. It also creates
-> the `Squad`/`Agent` CRs the operator reconciles.
+> **authZ** (user RBAC + access grants), and all domain CRUD. It also queues
+> `Squad`/`Agent` CR intents that the Kubernetes outbox worker writes for the
+> operator to reconcile.
+>
+> This document describes the target API shape. Implemented endpoints and
+> deferred cross-cutting behavior are reconciled in
+> [`implementation-status.md`](implementation-status.md).
 
 ---
 

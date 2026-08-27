@@ -6,8 +6,12 @@
 > - **Observability** — an **optional** feature that emits **Prometheus
 >   metrics** (enabled per deployment).
 > - **Metering** — **token usage** per agent and per squad, with **monetary
->   cost** when a provider has per-token pricing. Captured centrally at the
->   **LLM gateway**.
+>   cost** when a provider has per-token pricing. Current metering is captured
+>   through the **LLM gateway** callback path where configured.
+>
+> Runtime metrics and gateway metering callbacks have an initial implementation;
+> full production observability remains a design target. See
+> [`implementation-status.md`](implementation-status.md).
 
 ---
 

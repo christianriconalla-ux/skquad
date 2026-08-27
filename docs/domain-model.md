@@ -5,6 +5,9 @@
 > This document defines the first-class entities, their relationships,
 > ownership rules, and lifecycle. It is the shared vocabulary for the rest of
 > the architecture. The physical schema lives in [`data-model.md`](data-model.md).
+>
+> Most core entities now exist in code. Entity lifecycle hardening gaps are
+> tracked in [`implementation-status.md`](implementation-status.md).
 
 ---
 

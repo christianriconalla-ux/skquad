@@ -6,6 +6,10 @@
 > pod. It owns the agent's lifecycle, task-scoped context, the core work loop,
 > and the plugin interface. It is **model-agnostic** (via LiteLLM) and
 > **extensible** (via plugins).
+>
+> Current runtime behavior is partial but functional. See
+> [`implementation-status.md`](implementation-status.md) for implemented
+> features and remaining runtime safety gaps.
 
 ---
 

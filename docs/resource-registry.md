@@ -6,6 +6,10 @@
 > providers, skills, tools, APIs, knowledge bases, and project workspaces**.
 > The **platform admin registers** resources; the **squad owner grants** agents
 > access to them.
+>
+> Registry CRUD, permission grants, and sanitized runtime resource discovery are
+> implemented. Generated network egress and deeper connector semantics remain
+> follow-up work; see [`implementation-status.md`](implementation-status.md).
 
 ---
 

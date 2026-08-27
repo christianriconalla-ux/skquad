@@ -7,6 +7,10 @@
 > allow-list** (access grants) controls which agents may talk to which. All
 > messaging is **queued**, so a **busy agent is not disturbed** (protecting its
 > task context).
+>
+> The queue and runtime inbox path are implemented. Retry scheduling,
+> dead-lettering, and non-lossy consult/reply behavior remain tracked follow-up
+> work; see [`implementation-status.md`](implementation-status.md).
 
 ---
 

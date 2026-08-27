@@ -4,6 +4,10 @@
 >
 > skquad is an **open-source, cloud-native Agentic AI platform**. The goal is a
 > simple, easy-to-use platform where a user can create AI agents **in minutes**.
+>
+> This remains the product target. The current implemented slice and deferred
+> requirements are reconciled in
+> [`implementation-status.md`](implementation-status.md).
 
 ---
 

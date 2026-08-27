@@ -14,6 +14,13 @@
 - command/test run: `helm lint charts/skquad`; `helm template skquad charts/skquad --namespace skquad-system --include-crds`; production-oriented Helm render with external Postgres, OIDC, LiteLLM master-key, LiteLLM database, and provider API-key Secret refs; `git diff --check`.
 - result: Added a Kubernetes operations runbook covering Helm install/upgrade, production-oriented values, namespace model, generated Secrets, ingress, troubleshooting, scale-to-zero, runtime readiness, RBAC/security notes, and uninstall guidance. Linked it from deployment, chart, and root documentation. Chart lint/render and whitespace checks passed.
 
+## 2026-08-28 01:16:09 ACST
+
+- objective: Reconcile documentation with the current implementation status.
+- files changed: `docs/implementation-status.md`, `README.md`, major `docs/*.md` design documents, `WORKLOG.md`; Kanbunny board updated with new follow-up cards.
+- command/test run: `rg` scan for stale status/implementation language; `helm lint charts/skquad`; `helm template skquad charts/skquad --namespace skquad-system --include-crds`; `python3 -m unittest discover -s tests/integration`; `git diff --check`; Kanbunny board count check.
+- result: Added an implementation-status ledger that distinguishes implemented slices from deferred hardening work. Linked major design docs to the ledger, corrected stale overclaims around API Kubernetes writes, audit guarantees, LLM gateway enforcement, and metering, and created focused Kanbunny TODO cards for unresolved review findings. Remaining `rg` hits are intentional boundary/status language.
+
 ## 2026-08-27 16:33:03 ACST
 
 - objective: Continue Skquad control-plane implementation.

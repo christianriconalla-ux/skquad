@@ -5,6 +5,10 @@
 > skquad's core stays small; **capabilities are added through plugins**. This
 > is how the platform is **extensible** without the core ballooning (per the
 > "keep it simple, extend via plugins" requirement).
+>
+> Runtime importlib loading and permission-filtered tool exposure are
+> implemented. Packaging, distribution, and richer connector behavior remain
+> design scope; see [`implementation-status.md`](implementation-status.md).
 
 ---
 
