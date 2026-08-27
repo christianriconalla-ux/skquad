@@ -97,11 +97,20 @@ jobs:
           assert any(dep.startswith("psycopg") for dep in deps)
 
           config = pathlib.Path("config.yaml").read_text()
-          for required in ("model_list:", "general_settings:", "LITELLM_MASTER_KEY", "DATABASE_URL"):
+          for required in ("model_list:", "general_settings:", "LITELLM_MASTER_KEY", "DATABASE_URL", "skquad_litellm_callbacks.proxy_handler_instance"):
               assert required in config
+          assert pathlib.Path("skquad_litellm_callbacks.py").exists()
           PY
       - name: Build gateway image
         run: docker build -t skquad-llm-gateway-ci ./llm-gateway
+      - name: Smoke test Skquad callback import
+        run: |
+          docker run --rm --entrypoint python skquad-llm-gateway-ci - <<'PY'
+          import skquad_litellm_callbacks
+
+          assert skquad_litellm_callbacks.proxy_handler_instance is not None
+          print("OK: Skquad LiteLLM callback imports")
+          PY
       - name: Smoke test Prisma client against Postgres
         run: |
           docker run --rm -i --network host --entrypoint python \

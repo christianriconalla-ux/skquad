@@ -39,7 +39,8 @@ agent-runtime/
   virtual key, calls the OpenAI-compatible gateway through LiteLLM using the
   explicit `SKQUAD_DEFAULT_MODEL` model alias, discovers fresh task-scoped
   context for each task, exposes only currently granted plugin tool schemas, and
-  invokes authorized loaded plugin tool calls.
+  invokes authorized loaded plugin tool calls. Calls include agent, squad, and
+  task metadata so the gateway can attribute metering and failure audit events.
 - Loads plugin modules with importlib from `SKQUAD_PLUGIN_MODULES`, optionally
   filters them with `SKQUAD_ENABLED_PLUGINS`, and blocks tasks predictably for
   unknown tool calls or plugin invocation failures.

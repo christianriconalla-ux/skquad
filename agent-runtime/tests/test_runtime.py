@@ -546,6 +546,14 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(calls[0]["model"], "model-1")
             self.assertEqual(calls[0]["api_base"], "http://gateway")
             self.assertEqual(calls[0]["api_key"], "virtual-key")
+            self.assertEqual(
+                calls[0]["metadata"],
+                {
+                    "skquad_agent_id": "agent-1",
+                    "skquad_squad_id": "squad-1",
+                    "skquad_task_id": "task-1",
+                },
+            )
 
     def test_litellm_handler_falls_back_to_legacy_provider_env_for_model(self):
         with tempfile.TemporaryDirectory() as tmp:

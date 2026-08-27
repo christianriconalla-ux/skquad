@@ -50,6 +50,8 @@ mutations into the Kubernetes API for the operator. Optional settings:
   `SKQUAD_LLM_GATEWAY_URL`)
 - `SKQUAD_LITELLM_MASTER_KEY` (optional LiteLLM admin key; when set, agent
   identity create/rotate provisions a real LiteLLM virtual key)
+- `SKQUAD_GATEWAY_CALLBACK_TOKEN` (optional internal bearer token enabling
+  LiteLLM gateway metering/failure callbacks into `/api/v1/gateway/metering`)
 
 Implemented slice:
 
@@ -92,6 +94,6 @@ Implemented slice:
   into the `Agent` CR so the operator can scale an agent up or keep it warm
   while work remains
 
-Next slices are LiteLLM metering callbacks, key refresh/revocation when grants
-change, task execution leases/results, semantic memory search, artifact
-persistence, and web implementation.
+Next slices are LiteLLM key refresh/revocation when grants change, task
+execution leases/results, semantic memory search, artifact persistence, and web
+implementation.

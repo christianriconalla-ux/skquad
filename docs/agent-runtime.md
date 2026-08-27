@@ -141,9 +141,14 @@ litellm.completion(
     messages=working_context.messages,
     api_base=config.llm_gateway_url,    # central gateway
     api_key=agent.virtual_key,          # per-agent virtual key
+    metadata={...},                     # agent/squad/task attribution
     tools=enabled_tool_schemas,         # from plugins
 )
 ```
+
+The runtime includes agent, squad, and task metadata on every LiteLLM call so
+the gateway callback can attribute metering records and failure audit entries
+without exposing upstream provider credentials to the pod.
 
 ---
 

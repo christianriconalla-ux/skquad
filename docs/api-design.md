@@ -202,8 +202,10 @@ yet interpreted by the control plane.
 | `GET` | `/api/v1/squads/:id/metering` | Squad metering (tokens + cost, time-range). |
 | `GET` | `/api/v1/agents/:id/metering` | Agent metering (tokens + cost, time-range). |
 | `GET` | `/api/v1/metering/summary` | Platform-wide summary (admin). |
+| `POST` | `/api/v1/gateway/metering` | Internal LiteLLM gateway callback ingestion. Authenticated with `SKQUAD_GATEWAY_CALLBACK_TOKEN`, not user/session auth. |
 
-Query params: `?from=`, `?to=`, `?groupBy=agent|squad|provider|model`.
+Current read endpoints return aggregate totals. `?from=`, `?to=`, and
+`?groupBy=agent|squad|provider|model` are future compatibility targets.
 
 ---
 

@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS metering (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id      uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     squad_id      uuid NOT NULL REFERENCES squads(id) ON DELETE CASCADE,
+    task_id       uuid REFERENCES tasks(id) ON DELETE SET NULL,
     provider_id   uuid,
     model         text NOT NULL DEFAULT '',
     input_tokens  integer NOT NULL DEFAULT 0,
@@ -210,8 +211,10 @@ CREATE TABLE IF NOT EXISTS metering (
     currency      text NOT NULL DEFAULT 'USD',
     timestamp     timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE IF EXISTS metering ADD COLUMN IF NOT EXISTS task_id uuid REFERENCES tasks(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_metering_squad ON metering(squad_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_metering_agent ON metering(agent_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_metering_task ON metering(task_id, timestamp);
 
 -- ---------------------------------------------------------------------------
 -- Audit log (append-only)

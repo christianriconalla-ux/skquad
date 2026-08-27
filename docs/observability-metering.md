@@ -75,10 +75,17 @@ centrally at the **LLM gateway** (see [llm-gateway.md](llm-gateway.md)).
 For **every LLM call** an agent makes (via the gateway), the gateway records:
 
 - **agent id**, **squad id**
+- **task id** when the call happens while executing a task
 - **model**, **provider**
 - **input tokens**, **output tokens**
 - **timestamp**
 - **cost** (if the provider has per-token pricing)
+
+Current implementation: the runtime attaches `skquad_agent_id`,
+`skquad_squad_id`, and `skquad_task_id` metadata to LiteLLM calls. The LiteLLM
+proxy loads the Skquad custom callback and posts successful calls to
+`POST /api/v1/gateway/metering` with the gateway callback token. Failed gateway
+calls produce a best-effort system audit entry instead of a usage row.
 
 ### 2.2 Cost calculation
 
@@ -102,7 +109,7 @@ cost = input_tokens × price_per_input_token
 ```
 metering(
   id,
-  agent_id, squad_id,
+  agent_id, squad_id, task_id,
   model, provider,
   input_tokens, output_tokens,
   cost,            # nullable (null if no pricing)
@@ -119,6 +126,12 @@ metering(
   - **Per provider/model** — breakdown.
 - Aggregations are computed from the metering table (with time-range filters).
 - The **platform admin** can view metering across all squads.
+
+Callback delivery is intentionally asynchronous and best-effort from the
+gateway's perspective so LLM responses are not blocked by Skquad metering
+ingestion outages. The control plane treats successful usage inserts as the
+durable accounting event and records a follow-up audit row on a best-effort
+basis, matching current mutation-audit semantics.
 
 ---
 

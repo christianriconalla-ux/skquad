@@ -89,8 +89,8 @@ The repository currently implements:
 Important gaps remain:
 
 - the web application does not yet expose the documented product workflows;
-- LiteLLM metering callbacks and automatic key refresh or revocation after
-  permission changes are not implemented;
+- automatic LiteLLM key refresh or revocation after permission changes is not
+  implemented;
 - semantic vector memory and durable artifact storage are planned;
 - task execution leases, transactional task-result persistence, and message
   dead-letter handling need further work; and

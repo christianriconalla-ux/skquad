@@ -560,6 +560,11 @@ class LiteLLMTaskHandler:
                 "messages": messages,
                 "api_base": config.llm_gateway_url.rstrip("/"),
                 "api_key": virtual_key,
+                "metadata": {
+                    "skquad_agent_id": config.agent_id,
+                    "skquad_squad_id": config.squad_id,
+                    "skquad_task_id": task.id,
+                },
             }
             if tools:
                 completion_kwargs["tools"] = tools

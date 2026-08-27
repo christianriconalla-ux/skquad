@@ -45,8 +45,9 @@ type Config struct {
 	LLMGatewayURL   string // URL written into Agent CR specs for LLM gateway calls
 
 	// LiteLLM gateway management
-	LiteLLMAdminURL  string // URL used by the API server for LiteLLM key management
-	LiteLLMMasterKey string // LiteLLM proxy admin key used for virtual-key provisioning
+	LiteLLMAdminURL      string // URL used by the API server for LiteLLM key management
+	LiteLLMMasterKey     string // LiteLLM proxy admin key used for virtual-key provisioning
+	GatewayCallbackToken string // internal bearer token for gateway callbacks into the API
 
 	// Behaviour
 	DefaultIdleTimeout time.Duration
@@ -55,25 +56,26 @@ type Config struct {
 // Load reads configuration from the environment, applying defaults.
 func Load() (*Config, error) {
 	c := &Config{
-		Addr:               envOr("SKQUAD_ADDR", ":8080"),
-		AuthMode:           AuthMode(envOr("SKQUAD_AUTH_MODE", string(AuthDev))),
-		IssuerURL:          os.Getenv("SKQUAD_OIDC_ISSUER"),
-		Audience:           os.Getenv("SKQUAD_OIDC_AUDIENCE"),
-		DevEmail:           envOr("SKQUAD_DEV_EMAIL", "dev@skquad.local"),
-		DevName:            envOr("SKQUAD_DEV_NAME", "Dev Admin"),
-		DatabaseURL:        os.Getenv("SKQUAD_DATABASE_URL"),
-		K8sEnabled:         envBool("SKQUAD_K8S_ENABLED", false),
-		K8sAPIBase:         envOr("SKQUAD_K8S_API_BASE", "https://kubernetes.default.svc"),
-		K8sNamespace:       envOr("SKQUAD_K8S_NAMESPACE", "skquad-system"),
-		K8sTokenFile:       envOr("SKQUAD_K8S_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
-		K8sGroupVersion:    envOr("SKQUAD_K8S_GROUP_VERSION", "skquad.io/v1"),
-		K8sInsecure:        envBool("SKQUAD_K8S_INSECURE", false),
-		AgentImage:         envOr("SKQUAD_AGENT_IMAGE", "skquad/agent-runtime:0.1.0"),
-		ControlPlaneURL:    os.Getenv("SKQUAD_CONTROL_PLANE_URL"),
-		LLMGatewayURL:      os.Getenv("SKQUAD_LLM_GATEWAY_URL"),
-		LiteLLMAdminURL:    os.Getenv("SKQUAD_LITELLM_ADMIN_URL"),
-		LiteLLMMasterKey:   os.Getenv("SKQUAD_LITELLM_MASTER_KEY"),
-		DefaultIdleTimeout: envDuration("SKQUAD_DEFAULT_IDLE_TIMEOUT", 5*time.Minute),
+		Addr:                 envOr("SKQUAD_ADDR", ":8080"),
+		AuthMode:             AuthMode(envOr("SKQUAD_AUTH_MODE", string(AuthDev))),
+		IssuerURL:            os.Getenv("SKQUAD_OIDC_ISSUER"),
+		Audience:             os.Getenv("SKQUAD_OIDC_AUDIENCE"),
+		DevEmail:             envOr("SKQUAD_DEV_EMAIL", "dev@skquad.local"),
+		DevName:              envOr("SKQUAD_DEV_NAME", "Dev Admin"),
+		DatabaseURL:          os.Getenv("SKQUAD_DATABASE_URL"),
+		K8sEnabled:           envBool("SKQUAD_K8S_ENABLED", false),
+		K8sAPIBase:           envOr("SKQUAD_K8S_API_BASE", "https://kubernetes.default.svc"),
+		K8sNamespace:         envOr("SKQUAD_K8S_NAMESPACE", "skquad-system"),
+		K8sTokenFile:         envOr("SKQUAD_K8S_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
+		K8sGroupVersion:      envOr("SKQUAD_K8S_GROUP_VERSION", "skquad.io/v1"),
+		K8sInsecure:          envBool("SKQUAD_K8S_INSECURE", false),
+		AgentImage:           envOr("SKQUAD_AGENT_IMAGE", "skquad/agent-runtime:0.1.0"),
+		ControlPlaneURL:      os.Getenv("SKQUAD_CONTROL_PLANE_URL"),
+		LLMGatewayURL:        os.Getenv("SKQUAD_LLM_GATEWAY_URL"),
+		LiteLLMAdminURL:      os.Getenv("SKQUAD_LITELLM_ADMIN_URL"),
+		LiteLLMMasterKey:     os.Getenv("SKQUAD_LITELLM_MASTER_KEY"),
+		GatewayCallbackToken: os.Getenv("SKQUAD_GATEWAY_CALLBACK_TOKEN"),
+		DefaultIdleTimeout:   envDuration("SKQUAD_DEFAULT_IDLE_TIMEOUT", 5*time.Minute),
 	}
 	if c.LiteLLMAdminURL == "" {
 		c.LiteLLMAdminURL = c.LLMGatewayURL

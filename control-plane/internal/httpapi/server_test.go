@@ -323,6 +323,93 @@ func TestAuditAndMeteringEndpoints(t *testing.T) {
 	require.Equal(t, 155, summary.InputTokens+summary.OutputTokens)
 }
 
+func TestGatewayMeteringCallbackRecordsUsageAndAudit(t *testing.T) {
+	t.Parallel()
+
+	store := storage.NewMemoryStore()
+	cfg := testConfig()
+	cfg.GatewayCallbackToken = "callback-token"
+	handler := New(cfg, store)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Callback Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Callback Agent",
+	}, http.StatusCreated, &agent)
+
+	doGatewayCallback(t, handler, "callback-token", map[string]any{
+		"agent_id":      agent.ID,
+		"squad_id":      squad.ID,
+		"model":         "openai/test-model",
+		"input_tokens":  10,
+		"output_tokens": 5,
+		"cost":          0.12,
+		"currency":      "USD",
+	}, http.StatusAccepted)
+
+	var usage domain.MeteringEvent
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID+"/metering", nil, http.StatusOK, &usage)
+	require.Equal(t, 10, usage.InputTokens)
+	require.Equal(t, 5, usage.OutputTokens)
+	require.InDelta(t, 0.12, usage.Cost, 0.0001)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "llm.metering.ingest")
+}
+
+func TestGatewayMeteringCallbackRejectsBadToken(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.GatewayCallbackToken = "callback-token"
+	handler := New(cfg, storage.NewMemoryStore())
+
+	doGatewayCallback(t, handler, "wrong-token", map[string]any{
+		"agent_id": "agent-1",
+		"squad_id": "squad-1",
+	}, http.StatusUnauthorized)
+}
+
+func TestGatewayFailureCallbackRecordsAuditOnly(t *testing.T) {
+	t.Parallel()
+
+	store := storage.NewMemoryStore()
+	cfg := testConfig()
+	cfg.GatewayCallbackToken = "callback-token"
+	handler := New(cfg, store)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Failure Callback Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Failure Callback Agent",
+	}, http.StatusCreated, &agent)
+
+	doGatewayCallback(t, handler, "callback-token", map[string]any{
+		"status":   "failure",
+		"agent_id": agent.ID,
+		"squad_id": squad.ID,
+		"model":    "openai/test-model",
+		"error":    "upstream timeout",
+	}, http.StatusAccepted)
+
+	var usage domain.MeteringEvent
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID+"/metering", nil, http.StatusOK, &usage)
+	require.Equal(t, 0, usage.InputTokens+usage.OutputTokens)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "llm.failure")
+}
+
 func TestSquadAndAgentMutationsWriteCustomResources(t *testing.T) {
 	t.Parallel()
 
@@ -1065,6 +1152,19 @@ func doJSONNoBody(t *testing.T, handler http.Handler, method, path string, body 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, wantStatus, rec.Code, rec.Body.String())
+}
+
+func doGatewayCallback(t *testing.T, handler http.Handler, token string, body any, wantStatus int) {
+	t.Helper()
+
+	payload, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/gateway/metering", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	require.Equal(t, wantStatus, rec.Code, rec.Body.String())

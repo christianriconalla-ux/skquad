@@ -24,7 +24,7 @@ still defaults to development authentication.
 | Control plane | `go vet ./...` and `go test ./...` in `control-plane/` |
 | Operator | `go vet ./...` and `go test ./...` in `operator/` |
 | Agent runtime | installs the Python package, runs `unittest`, and compiles runtime/test modules |
-| LLM gateway | validates Python project metadata/config, builds the gateway image, checks generated Prisma client artifacts against Postgres, and smoke-tests LiteLLM readiness against Postgres |
+| LLM gateway | validates Python project metadata/config, builds the gateway image, imports the Skquad LiteLLM callback inside the image, checks generated Prisma client artifacts against Postgres, and smoke-tests LiteLLM readiness against Postgres |
 | Helm chart | `helm lint`, default chart render, and provider-configured gateway render |
 | Web | deterministic `npm ci` and `next build` |
 

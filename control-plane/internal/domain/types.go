@@ -321,6 +321,7 @@ type MeteringEvent struct {
 	ID           string    `json:"id"`
 	AgentID      string    `json:"agent_id"`
 	SquadID      string    `json:"squad_id"`
+	TaskID       string    `json:"task_id,omitempty"`
 	ProviderID   string    `json:"provider_id"`
 	Model        string    `json:"model"`
 	InputTokens  int       `json:"input_tokens"`

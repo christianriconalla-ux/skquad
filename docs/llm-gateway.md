@@ -99,6 +99,13 @@ change is still a required follow-up.
   [data-model.md](data-model.md)).
 - The **web app** aggregates metering per agent and per squad (and shows cost
   where pricing is configured).
+- Current implementation uses a LiteLLM custom callback
+  (`skquad_litellm_callbacks.proxy_handler_instance`) loaded by the proxy. The
+  runtime attaches agent, squad, and task metadata to every LiteLLM call; the
+  callback posts successful usage to the control plane's internal
+  `/api/v1/gateway/metering` endpoint. Gateway failures post an audit-only
+  event. Callback delivery and audit writes are best-effort; the metering row
+  is the durable success record.
 
 ```
 POST /v1/chat/completions  (agent → gateway)
@@ -150,8 +157,8 @@ Control-plane management endpoints (for the API server, not agents):
 - `GET /global/spend`, `GET /spend` (metering queries)
 
 Skquad currently uses `/key/generate` during identity create/rotate. The
-remaining management endpoints are part of the metering, revocation, and budget
-follow-up work.
+remaining management endpoints are part of the revocation, grant-change update,
+and budget follow-up work.
 
 ---
 

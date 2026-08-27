@@ -118,6 +118,8 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 	r.Get("/healthz", s.health)
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Post("/gateway/metering", s.ingestGatewayMetering)
+
 		r.Route("/agents/me", func(r chi.Router) {
 			r.Use(s.authenticateAgent)
 
@@ -307,6 +309,26 @@ func (s *Server) authenticateAgent(next http.Handler) http.Handler {
 func (s *Server) requirePlatformAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if currentUser(r.Context()).Role != domain.RolePlatformAdmin {
 		writeError(w, http.StatusForbidden, "forbidden", "platform admin role is required")
+		return false
+	}
+	return true
+}
+
+func (s *Server) requireGatewayCallback(w http.ResponseWriter, r *http.Request) bool {
+	expected := ""
+	if s.cfg != nil {
+		expected = strings.TrimSpace(s.cfg.GatewayCallbackToken)
+	}
+	if expected == "" {
+		writeError(w, http.StatusNotFound, "not_found", "gateway callback endpoint is not configured")
+		return false
+	}
+	actual := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if actual == "" {
+		actual = strings.TrimSpace(r.Header.Get("X-Skquad-Callback-Token"))
+	}
+	if subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "gateway callback token is invalid")
 		return false
 	}
 	return true
@@ -1261,6 +1283,94 @@ func (s *Server) getMeteringSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, usage)
 }
 
+type gatewayMeteringRequest struct {
+	Status       string    `json:"status"`
+	AgentID      string    `json:"agent_id"`
+	SquadID      string    `json:"squad_id"`
+	TaskID       string    `json:"task_id"`
+	ProviderID   string    `json:"provider_id"`
+	Model        string    `json:"model"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	Cost         float64   `json:"cost"`
+	Currency     string    `json:"currency"`
+	Error        string    `json:"error"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+func (s *Server) ingestGatewayMetering(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGatewayCallback(w, r) {
+		return
+	}
+	var req gatewayMeteringRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.Status = strings.TrimSpace(req.Status)
+	if req.Status == "" {
+		req.Status = "success"
+	}
+	if req.Status != "success" && req.Status != "failure" {
+		writeError(w, http.StatusBadRequest, "bad_request", "status must be success or failure")
+		return
+	}
+	if req.AgentID == "" || req.SquadID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "agent_id and squad_id are required")
+		return
+	}
+	agent, err := s.store.GetAgent(r.Context(), req.AgentID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if agent.SquadID != req.SquadID {
+		writeError(w, http.StatusForbidden, "forbidden", "agent does not belong to squad")
+		return
+	}
+
+	metadata, _ := json.Marshal(map[string]any{
+		"model":         req.Model,
+		"provider_id":   req.ProviderID,
+		"task_id":       req.TaskID,
+		"input_tokens":  req.InputTokens,
+		"output_tokens": req.OutputTokens,
+		"cost":          req.Cost,
+		"currency":      defaultMeteringCurrency(req.Currency),
+		"error":         trimRunes(req.Error, 512),
+	})
+	if req.Status == "failure" {
+		_ = s.recordSystemAudit(r.Context(), "llm.failure", "agent", req.AgentID, req.SquadID, metadata)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	if req.InputTokens < 0 || req.OutputTokens < 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "token counts must not be negative")
+		return
+	}
+	if req.Cost < 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "cost must not be negative")
+		return
+	}
+	if err := s.store.RecordMetering(r.Context(), &domain.MeteringEvent{
+		AgentID:      req.AgentID,
+		SquadID:      req.SquadID,
+		TaskID:       req.TaskID,
+		ProviderID:   req.ProviderID,
+		Model:        req.Model,
+		InputTokens:  req.InputTokens,
+		OutputTokens: req.OutputTokens,
+		Cost:         req.Cost,
+		Currency:     req.Currency,
+		Timestamp:    req.Timestamp,
+	}); err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	_ = s.recordSystemAudit(r.Context(), "llm.metering.ingest", "agent", req.AgentID, req.SquadID, metadata)
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (s *Server) listSquadAudit(w http.ResponseWriter, r *http.Request) {
 	squad, ok := s.loadOwnedOrAdminSquad(w, r)
 	if !ok {
@@ -2102,6 +2212,21 @@ func (s *Server) recordAgentAudit(r *http.Request, agentID, action, resourceType
 	})
 }
 
+func (s *Server) recordSystemAudit(ctx context.Context, action, resourceType, resourceID, squadID string, metadata json.RawMessage) error {
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
+	return s.store.RecordAudit(ctx, &domain.AuditEntry{
+		ActorType:    "system",
+		ActorID:      uuid.Nil.String(),
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		SquadID:      squadID,
+		Metadata:     metadata,
+	})
+}
+
 func (s *Server) upsertAgentCR(ctx context.Context, agent *domain.Agent) error {
 	identity, err := s.store.GetAgentIdentity(ctx, agent.ID)
 	if err != nil {
@@ -2183,6 +2308,14 @@ func trimRunes(value string, limit int) string {
 		return value
 	}
 	return string(runes[:limit])
+}
+
+func defaultMeteringCurrency(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "USD"
+	}
+	return value
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

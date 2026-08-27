@@ -14,4 +14,5 @@ general_settings:
 litellm_settings:
   drop_params: true
   overwrite_user_with_key_hash: true
-  success_callback: []   # metering callbacks are wired in a later slice
+  callbacks: skquad_litellm_callbacks.proxy_handler_instance
+  success_callback: []

@@ -11,6 +11,7 @@ permissions, and routes BYOM calls.
 ```
 llm-gateway/
 ├── config.yaml            # LiteLLM proxy bootstrap config
+├── skquad_litellm_callbacks.py
 └── pyproject.toml
 ```
 
@@ -36,5 +37,10 @@ The Skquad control plane provisions agent virtual keys by calling LiteLLM
 `llm_provider` resources. The raw virtual key is written only to the generated
 agent Secret; Postgres stores the Secret ref, not the key value.
 
-Metering callbacks into Skquad's own `metering_events` table and automatic key
-updates when grants change are still follow-up slices.
+The proxy loads `skquad_litellm_callbacks.proxy_handler_instance` as a LiteLLM
+custom callback. Successful calls post token/cost usage to the control plane's
+internal `/api/v1/gateway/metering` endpoint; failed calls post an audit-only
+event. The callback includes agent, squad, and task metadata supplied by the
+runtime and authenticates with `SKQUAD_GATEWAY_CALLBACK_TOKEN`.
+
+Automatic key updates when grants change are still a follow-up slice.

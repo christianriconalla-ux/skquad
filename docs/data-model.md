@@ -284,6 +284,7 @@ CREATE TABLE metering (
     id            bigint GENERATED ALWAYS AS IDENTITY,
     agent_id      uuid NOT NULL,
     squad_id      uuid NOT NULL,
+    task_id       uuid REFERENCES tasks(id) ON DELETE SET NULL,
     model         text NOT NULL,
     provider      text NOT NULL,
     input_tokens  bigint NOT NULL DEFAULT 0,
@@ -296,7 +297,12 @@ CREATE TABLE metering (
 -- Create monthly partitions; retain raw for N months, then aggregate + drop.
 CREATE INDEX idx_metering_agent_time ON metering(agent_id, timestamp);
 CREATE INDEX idx_metering_squad_time ON metering(squad_id, timestamp);
+CREATE INDEX idx_metering_task ON metering(task_id, timestamp);
 ```
+
+Current implementation note: LiteLLM success callbacks create metering rows
+through the internal gateway callback endpoint. Failure callbacks are recorded
+as best-effort system audit entries, not metering rows.
 
 ---
 

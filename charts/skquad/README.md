@@ -68,6 +68,10 @@ in the config map.
 The gateway image includes LiteLLM proxy dependencies, generated Prisma client
 artifacts, and a fetched Prisma query-engine binary for persistent virtual-key
 storage.
+The chart also wires the same master-key Secret into the API server and gateway
+as `SKQUAD_GATEWAY_CALLBACK_TOKEN`. The gateway's Skquad LiteLLM callback uses
+that token to post successful usage and failure audit events back to the API
+server's internal `/api/v1/gateway/metering` endpoint.
 
 `llmGateway.probes.startup` gives LiteLLM time to prepare database-backed proxy
 state before liveness checks can restart the container. Tune it upward if a

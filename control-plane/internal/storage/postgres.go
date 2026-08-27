@@ -876,11 +876,11 @@ func (p *PostgresStore) AgentHasPermission(ctx context.Context, agentID string, 
 func (p *PostgresStore) RecordMetering(ctx context.Context, event *domain.MeteringEvent) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO metering (
-			agent_id, squad_id, provider_id, model, input_tokens, output_tokens,
+			agent_id, squad_id, task_id, provider_id, model, input_tokens, output_tokens,
 			cost, currency, timestamp
 		)
-		VALUES ($1, $2, nullif($3, '')::uuid, $4, $5, $6, $7, $8, coalesce(nullif($9, ''), now()::text)::timestamptz)
-	`, event.AgentID, event.SquadID, event.ProviderID, event.Model, event.InputTokens, event.OutputTokens, event.Cost, defaultCurrency(event.Currency), nullableTimeText(event.Timestamp))
+		VALUES ($1, $2, nullif($3, '')::uuid, nullif($4, '')::uuid, $5, $6, $7, $8, $9, coalesce(nullif($10, ''), now()::text)::timestamptz)
+	`, event.AgentID, event.SquadID, event.TaskID, event.ProviderID, event.Model, event.InputTokens, event.OutputTokens, event.Cost, defaultCurrency(event.Currency), nullableTimeText(event.Timestamp))
 	return mapPgErr(err)
 }
 
