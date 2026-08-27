@@ -82,6 +82,52 @@ func TestValidationErrorEnvelope(t *testing.T) {
 	require.Equal(t, "bad_request", body["error"]["code"])
 }
 
+func TestTaskStatusValidationUsesErrorEnvelope(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Status Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Status Agent",
+	}, http.StatusCreated, &agent)
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Validate status",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+
+	var body map[string]map[string]string
+	doJSON(t, handler, http.MethodPost, "/api/v1/tasks/"+task.ID+"/move", map[string]any{
+		"status": "not-real",
+	}, http.StatusBadRequest, &body)
+	require.Equal(t, "bad_request", body["error"]["code"])
+	require.Equal(t, "status is invalid", body["error"]["message"])
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
+		"status": "todo",
+	}, http.StatusBadRequest, &body)
+	require.Equal(t, "bad_request", body["error"]["code"])
+	require.Equal(t, "status must be in-review or done", body["error"]["message"])
+
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/heartbeat", map[string]any{
+		"status": "paused",
+	}, http.StatusBadRequest, &body)
+	require.Equal(t, "bad_request", body["error"]["code"])
+	require.Equal(t, "status is invalid", body["error"]["message"])
+}
+
 func TestOIDCAuthProvisionsUser(t *testing.T) {
 	t.Parallel()
 

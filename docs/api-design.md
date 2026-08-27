@@ -16,8 +16,11 @@
 - **AuthZ:** enforced per endpoint (role + ownership + access grants).
 - **Format:** JSON (request + response).
 - **Errors:** consistent error envelope (see §10).
-- **Pagination:** `?cursor=` + `?limit=` (default limit 50).
-- **Idempotency:** `Idempotency-Key` header for mutating endpoints (create/assign).
+- **Pagination:** current list endpoints are unpaginated; `?cursor=` +
+  `?limit=` is a future compatibility target for high-cardinality lists.
+- **Idempotency:** current mutation endpoints do not persist
+  `Idempotency-Key`; clients should retry only after checking resource state.
+  Durable idempotency keys are tracked as a later hardening slice.
 - **Versioning:** URI versioning (`/api/v1`); breaking changes bump the version.
 
 ---
@@ -86,7 +89,6 @@ one-way verifier hash for runtime authentication.
 | `POST` | `/api/v1/squads/:id/board/tasks` | Create a task on the board. |
 | `GET` | `/api/v1/tasks/:id` | Get a task. |
 | `PATCH` | `/api/v1/tasks/:id` | Update title / description / metadata. |
-| `POST` | `/api/v1/tasks/:id/assign` | Assign a task to an agent (signals scale-up). |
 | `POST` | `/api/v1/tasks/:id/move` | Move a task to a column (`{ status }`). |
 | `DELETE` | `/api/v1/tasks/:id` | Delete a task. |
 
@@ -102,6 +104,12 @@ one-way verifier hash for runtime authentication.
 > | `POST` | `/api/v1/agents/me/tasks/:id/complete` | Mark a task done / in-review. |
 > | `POST` | `/api/v1/agents/me/tasks/:id/block` | Mark a task `blocked`. |
 > | `POST` | `/api/v1/agents/me/heartbeat` | Report `idle`, `busy`, or `error`. |
+
+Task status values currently accepted by the API are `todo`, `in-progress`,
+`in-review`, `done`, and `blocked`. User-driven move requests reject unknown
+statuses with a `bad_request` error. Agent completion is narrower: agents may
+complete to `in-review` or `done`; they must use the block endpoint for
+`blocked`.
 
 ---
 
@@ -170,6 +178,9 @@ The same CRUD pattern applies to each type:
 
 Each supports `POST` (register, admin), `GET` (list/get), `PATCH` (admin),
 `POST /:id/deprecate` (admin).
+
+Current list endpoints return full result sets. Pagination parameters are not
+yet interpreted by the control plane.
 
 ---
 
@@ -258,6 +269,8 @@ Query params: `?from=`, `?to=`, `?groupBy=agent|squad|provider|model`.
 
 - **Webhooks** — notify external systems on task/agent events (later).
 - **GraphQL** — whether to add a GraphQL layer (start REST).
+- **Pagination/idempotency** — add persisted idempotency-key handling and
+  cursor pagination when API traffic justifies the extra storage/indexing.
 - **Rate limiting** — per-user and per-agent limits (the gateway handles LLM
   calls; the API server handles API calls).
 - **OpenAPI spec** — generate and publish an OpenAPI 3 document (implementation).
