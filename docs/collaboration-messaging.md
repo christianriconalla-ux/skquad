@@ -147,8 +147,11 @@ Agent idle → check inbox
 - This is how a **cross-squad handoff** wakes a sleeping agent.
 
 Current implementation note: the control plane mirrors pending inbox messages
-into the target Agent CR activity signal. Runtime inbox draining and automatic
-delegate/handoff task materialization remain follow-up slices.
+into the target Agent CR activity signal. The runtime now fetches pending inbox
+messages, invokes an injected handler, acknowledges messages after successful
+handling, and leaves failed messages pending for at-least-once retry. Automatic
+delegate/handoff task materialization and durable failure-count/dead-letter
+transitions remain follow-up slices.
 
 ---
 
@@ -172,8 +175,10 @@ delegate/handoff task materialization remain follow-up slices.
   recipient acknowledges; on crash, it is re-delivered (idempotent handling).
 - **Idempotent handling** — agents handle a message idempotently (e.g. by
   `correlation_id` / message id) to avoid duplicate work.
-- **Dead-letter** — messages that fail repeatedly move to a dead-letter state
-  (surfaced to the owner + audited).
+- **Dead-letter** — the schema has a `dead` status, but automatic transition
+  after repeated failures is not implemented yet. Current runtime behavior is
+  retry-by-not-acknowledging, so failed messages remain pending and continue to
+  wake the target agent until a future dead-letter policy is added.
 - **No lost messages** — the Postgres-backed queue is durable.
 
 ---

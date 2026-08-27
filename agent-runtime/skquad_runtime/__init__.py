@@ -10,8 +10,12 @@ See docs/agent-runtime.md.
 from .runtime import (
     BootstrapConfig,
     ControlPlaneClient,
+    DefaultMessageHandler,
+    InboxRunResult,
     LiteLLMTaskHandler,
+    MessageResult,
     RuntimeMemory,
+    RuntimeMessage,
     RuntimeResource,
     RuntimeTask,
     RuntimeTaskContext,
@@ -24,6 +28,7 @@ from .runtime import (
     load_bootstrap_config,
     load_runtime_plugins,
     poll_once,
+    run_inbox_once,
     run_task_loop,
     run_task_once,
 )
@@ -31,8 +36,12 @@ from .runtime import (
 __all__ = [
     "BootstrapConfig",
     "ControlPlaneClient",
+    "DefaultMessageHandler",
+    "InboxRunResult",
     "LiteLLMTaskHandler",
+    "MessageResult",
     "RuntimeMemory",
+    "RuntimeMessage",
     "RuntimeResource",
     "RuntimeTask",
     "RuntimeTaskContext",
@@ -45,6 +54,7 @@ __all__ = [
     "load_bootstrap_config",
     "load_runtime_plugins",
     "poll_once",
+    "run_inbox_once",
     "run_task_loop",
     "run_task_once",
 ]

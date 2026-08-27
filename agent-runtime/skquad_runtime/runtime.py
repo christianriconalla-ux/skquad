@@ -35,6 +35,9 @@ class BootstrapConfig:
     control_plane_url: str
     llm_gateway_url: str
     task_loop_enabled: bool
+    task_poll_interval_seconds: float
+    inbox_poll_interval_seconds: float
+    inbox_batch_size: int
     plugin_modules: tuple[str, ...]
     enabled_plugins: tuple[str, ...]
 
@@ -105,9 +108,35 @@ class RuntimeTaskContext:
 
 
 @dataclass(frozen=True)
+class RuntimeMessage:
+    id: str
+    from_type: str
+    from_id: str
+    to_agent_id: str
+    squad_id: str
+    message_type: str
+    payload: Mapping[str, object]
+    status: str
+    correlation_id: str
+
+
+@dataclass(frozen=True)
 class TaskResult:
     status: str = "in-review"
     summary: str = ""
+
+
+@dataclass(frozen=True)
+class MessageResult:
+    ok: bool = True
+    summary: str = ""
+
+
+@dataclass(frozen=True)
+class InboxRunResult:
+    fetched: int = 0
+    processed: int = 0
+    failed: int = 0
 
 
 @dataclass(frozen=True)
@@ -125,6 +154,11 @@ class ToolResult:
 
 class TaskHandler(Protocol):
     def handle_task(self, task: RuntimeTask, config: BootstrapConfig) -> TaskResult:
+        ...
+
+
+class MessageHandler(Protocol):
+    def handle_message(self, message: RuntimeMessage, config: BootstrapConfig) -> MessageResult:
         ...
 
 
@@ -158,6 +192,9 @@ def load_bootstrap_config(environ: Mapping[str, str] | None = None) -> Bootstrap
         control_plane_url=env.get("SKQUAD_CONTROL_PLANE_URL", ""),
         llm_gateway_url=env.get("SKQUAD_LLM_GATEWAY_URL", ""),
         task_loop_enabled=env_bool(env, "SKQUAD_TASK_LOOP_ENABLED", True),
+        task_poll_interval_seconds=env_float(env, "SKQUAD_TASK_POLL_INTERVAL_SECONDS", 5.0),
+        inbox_poll_interval_seconds=env_float(env, "SKQUAD_INBOX_POLL_INTERVAL_SECONDS", 5.0),
+        inbox_batch_size=env_int(env, "SKQUAD_INBOX_BATCH_SIZE", 5),
         plugin_modules=parse_csv(env.get("SKQUAD_PLUGIN_MODULES", "")),
         enabled_plugins=parse_csv(env.get("SKQUAD_ENABLED_PLUGINS", "")),
     )
@@ -231,6 +268,14 @@ class ControlPlaneClient:
     def list_resources(self) -> list[RuntimeResource]:
         payload = self._json("GET", "/api/v1/agents/me/resources", None)
         return [runtime_resource(item) for item in payload]
+
+    def list_messages(self) -> list[RuntimeMessage]:
+        payload = self._json("GET", "/api/v1/agents/me/messages", None)
+        return [runtime_message(item) for item in payload]
+
+    def ack_message(self, message_id: str) -> RuntimeMessage:
+        payload = self._json("POST", f"/api/v1/agents/me/messages/{message_id}/ack", None)
+        return runtime_message(payload)
 
     def task_context(self, task_id: str) -> RuntimeTaskContext:
         payload = self._json("GET", f"/api/v1/agents/me/tasks/{task_id}/context", None)
@@ -347,6 +392,33 @@ def runtime_task_context(payload: Mapping[str, object]) -> RuntimeTaskContext:
         memory=[runtime_memory(item) for item in memory if isinstance(item, Mapping)],
         limits=limits,
     )
+
+
+def runtime_message(payload: Mapping[str, object]) -> RuntimeMessage:
+    message_payload = payload.get("payload") or {}
+    if not isinstance(message_payload, Mapping):
+        message_payload = {}
+    return RuntimeMessage(
+        id=str(payload.get("id", "")),
+        from_type=str(payload.get("from_type", "")),
+        from_id=str(payload.get("from_id", "")),
+        to_agent_id=str(payload.get("to_agent_id", "")),
+        squad_id=str(payload.get("squad_id", "")),
+        message_type=str(payload.get("type", "")),
+        payload=message_payload,
+        status=str(payload.get("status", "")),
+        correlation_id=str(payload.get("correlation_id", "")),
+    )
+
+
+class DefaultMessageHandler:
+    def handle_message(self, message: RuntimeMessage, _config: BootstrapConfig) -> MessageResult:
+        if message.message_type in ("ping", "reply", "consult"):
+            return MessageResult(ok=True, summary=f"handled {message.message_type} message")
+        return MessageResult(
+            ok=False,
+            summary=f"message type {message.message_type!r} requires a specialized handler",
+        )
 
 
 class LiteLLMTaskHandler:
@@ -712,20 +784,69 @@ def run_task_once(
     return final_task
 
 
+def run_inbox_once(
+    config: BootstrapConfig,
+    handler: MessageHandler,
+    client: ControlPlaneClient | None = None,
+    max_messages: int | None = None,
+) -> InboxRunResult:
+    status = bootstrap_status(config)
+    if not status.ready:
+        return InboxRunResult()
+    control_plane = client or ControlPlaneClient.from_bootstrap(config)
+    messages = control_plane.list_messages()
+    if not messages:
+        return InboxRunResult()
+
+    limit = max_messages if max_messages is not None else config.inbox_batch_size
+    limit = max(1, limit)
+    fetched = len(messages)
+    processed = 0
+    failed = 0
+    control_plane.heartbeat("busy")
+    for message in messages[:limit]:
+        try:
+            result = handler.handle_message(message, config)
+        except Exception:
+            LOGGER.exception(
+                "agent inbox message handling failed",
+                extra={"message_id": message.id, "message_type": message.message_type},
+            )
+            failed += 1
+            continue
+        if result.ok:
+            control_plane.ack_message(message.id)
+            processed += 1
+        else:
+            LOGGER.warning(
+                "agent inbox message left pending after handler failure",
+                extra={"message_id": message.id, "message_type": message.message_type},
+            )
+            failed += 1
+    control_plane.heartbeat("idle")
+    return InboxRunResult(fetched=fetched, processed=processed, failed=failed)
+
+
 def run_task_loop(
     config: BootstrapConfig,
     handler: TaskHandler,
+    message_handler: MessageHandler | None = None,
     client: ControlPlaneClient | None = None,
-    poll_interval_seconds: float = 5.0,
+    poll_interval_seconds: float | None = None,
     stop_event: object | None = None,
     sleeper: Callable[[float], None] = default_sleep,
 ) -> None:
+    interval = poll_interval_seconds
+    if interval is None:
+        interval = min(config.task_poll_interval_seconds, config.inbox_poll_interval_seconds)
     while not stop_requested(stop_event):
         try:
+            if message_handler is not None:
+                run_inbox_once(config, message_handler, client)
             run_task_once(config, handler, client)
         except Exception:
-            LOGGER.exception("agent task loop iteration failed")
-        sleeper(poll_interval_seconds)
+            LOGGER.exception("agent runtime loop iteration failed")
+        sleeper(interval)
 
 
 def stop_requested(stop_event: object | None) -> bool:
@@ -737,6 +858,26 @@ def env_bool(environ: Mapping[str, str], name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def env_float(environ: Mapping[str, str], name: str, default: float) -> float:
+    try:
+        value = float(environ.get(name, ""))
+    except ValueError:
+        return default
+    if value <= 0:
+        return default
+    return value
+
+
+def env_int(environ: Mapping[str, str], name: str, default: int) -> int:
+    try:
+        value = int(environ.get(name, ""))
+    except ValueError:
+        return default
+    if value <= 0:
+        return default
+    return value
 
 
 def parse_csv(value: str) -> tuple[str, ...]:
@@ -776,11 +917,10 @@ def main() -> None:
     config = load_bootstrap_config()
     if config.task_loop_enabled:
         plugins = load_runtime_plugins(config)
-        poll_interval = float(os.environ.get("SKQUAD_TASK_POLL_INTERVAL_SECONDS", "5"))
         worker = threading.Thread(
             target=run_task_loop,
             args=(config, LiteLLMTaskHandler(plugins=plugins)),
-            kwargs={"poll_interval_seconds": poll_interval},
+            kwargs={"message_handler": DefaultMessageHandler()},
             daemon=True,
         )
         worker.start()

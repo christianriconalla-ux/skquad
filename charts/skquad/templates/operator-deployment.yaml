@@ -36,6 +36,13 @@ spec:
             - name: health
               containerPort: 8081
               protocol: TCP
+          env:
+            - name: SKQUAD_AGENT_TASK_POLL_INTERVAL_SECONDS
+              value: {{ .Values.agent.taskPollIntervalSeconds | quote }}
+            - name: SKQUAD_AGENT_INBOX_POLL_INTERVAL_SECONDS
+              value: {{ .Values.agent.inboxPollIntervalSeconds | quote }}
+            - name: SKQUAD_AGENT_INBOX_BATCH_SIZE
+              value: {{ .Values.agent.inboxBatchSize | quote }}
           livenessProbe:
             httpGet:
               path: /healthz

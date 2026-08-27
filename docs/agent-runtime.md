@@ -199,6 +199,15 @@ later packaging/registry slice.
 - All messaging is **asynchronous** and goes through the control plane (which
   enforces access grants).
 
+Current implementation note: the runtime client can fetch pending inbox
+messages and acknowledge each message after an injected handler succeeds. The
+default runtime loop handles a bounded inbox batch and then at most one task per
+iteration, so a hot inbox and a hot task queue cannot starve each other. The
+default message handler acknowledges simple `ping`, `reply`, and `consult`
+delivery; unsupported `delegate`/`handoff` messages and handler failures are
+left pending for at-least-once retry. Durable failure counters and automatic
+dead-letter transitions remain follow-up control-plane work.
+
 ---
 
 ## 9. Long-Term Memory (Postgres + pgvector)
@@ -247,6 +256,9 @@ variables:
 | `SKQUAD_CONTROL_PLANE_URL` | Control-plane URL for task claim/status/heartbeat calls. |
 | `SKQUAD_LLM_GATEWAY_URL` | LLM gateway URL for model calls. |
 | `SKQUAD_TASK_LOOP_ENABLED` | Starts the runtime task loop when true. Defaults to true in the process entrypoint and is set true by the operator. |
+| `SKQUAD_TASK_POLL_INTERVAL_SECONDS` | Positive task-loop poll interval. Defaults to `5`. |
+| `SKQUAD_INBOX_POLL_INTERVAL_SECONDS` | Positive inbox poll interval. Defaults to `5`; the current loop sleeps for the lower of task/inbox intervals. |
+| `SKQUAD_INBOX_BATCH_SIZE` | Maximum inbox messages handled per loop iteration. Defaults to `5`. |
 | `SKQUAD_PLUGIN_MODULES` | Comma-separated plugin import specs (`module`, `module:factory`, `module:plugin`, or `module:Plugin`). |
 | `SKQUAD_ENABLED_PLUGINS` | Optional comma-separated allowlist of loaded plugin names. Missing enabled names fail startup. |
 

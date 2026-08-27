@@ -25,11 +25,11 @@ agent-runtime/
   gateway virtual key without returning raw secret values.
 - Exposes `/healthz` and `/readyz` through FastAPI.
 - Provides a small control-plane client for agent-authenticated task listing,
-  resource discovery, claiming, completion/blocking, and idle/busy/error
-  heartbeats.
-- Provides `poll_once` for claim/heartbeat checks and `run_task_once` for the
-  first handler-driven execution loop: claim a task, run an injected handler,
-  complete to `in-review`/`done`, or block on handler failure.
+  resource discovery, inbox listing/acknowledgement, task-context loading,
+  claiming, completion/blocking, and idle/busy/error heartbeats.
+- Provides `poll_once`, `run_inbox_once`, and `run_task_once` primitives. The
+  runtime loop drains a bounded inbox batch and then processes at most one task
+  per iteration so messages and tasks do not starve each other.
 - Provides a default `LiteLLMTaskHandler` that reads the mounted LLM gateway
   virtual key, calls the OpenAI-compatible gateway through LiteLLM using the
   explicit `SKQUAD_DEFAULT_MODEL` model alias, exposes
@@ -50,5 +50,6 @@ agent-runtime/
   per-agent memory persistence.
 - Provides the `skquad-agent-runtime` console script.
 
-Inbox draining, automatic registry package installation, semantic memory search,
-and artifact persistence are still upcoming slices.
+Automatic registry package installation, semantic memory search, persistent
+message failure counts/dead-lettering, and artifact persistence are still
+upcoming slices.

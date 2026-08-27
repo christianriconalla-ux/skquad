@@ -126,8 +126,9 @@ When the operator sees an `Agent` CR:
      warm until `idleTimeout` has elapsed, then scale to `0`.
    - **Secrets:** mount the agent's credential + LLM gateway virtual key when
      the Agent CR includes Kubernetes Secret names.
-   - **Env:** agent config (role, registry provider ID, default model alias, permissions,
-     endpoints, and `SKQUAD_TASK_LOOP_ENABLED=true`).
+   - **Env:** agent config (role, registry provider ID, default model alias,
+     endpoints, `SKQUAD_TASK_LOOP_ENABLED=true`, task poll interval, inbox poll
+     interval, and inbox batch size).
    - **Probes:** `/healthz`, `/readyz`.
    - **Resources:** requests/limits (configurable).
 2. **React to the control plane's desired activity signal.**
@@ -203,7 +204,7 @@ charts/skquad/
 - **Squad/agent resources** are created via the **API** (not by hand) — the API
   creates the CRs, the operator reconciles them.
 - **Values** configure images, replicas, resources, Postgres, idle timeout,
-  ingress, observability toggle, etc.
+  runtime task/inbox polling defaults, ingress, observability toggle, etc.
 - **Secrets** default to chart-managed dev values, but production installs can
   point Postgres and the API database URL at pre-created Kubernetes Secrets.
 

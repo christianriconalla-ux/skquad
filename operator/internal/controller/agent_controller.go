@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -77,6 +78,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				{Name: "SKQUAD_CONTROL_PLANE_URL", Value: agent.Spec.ControlPlaneURL},
 				{Name: "SKQUAD_LLM_GATEWAY_URL", Value: agent.Spec.LLMGatewayURL},
 				{Name: "SKQUAD_TASK_LOOP_ENABLED", Value: "true"},
+				{Name: "SKQUAD_TASK_POLL_INTERVAL_SECONDS", Value: envOrDefault("SKQUAD_AGENT_TASK_POLL_INTERVAL_SECONDS", "5")},
+				{Name: "SKQUAD_INBOX_POLL_INTERVAL_SECONDS", Value: envOrDefault("SKQUAD_AGENT_INBOX_POLL_INTERVAL_SECONDS", "5")},
+				{Name: "SKQUAD_INBOX_BATCH_SIZE", Value: envOrDefault("SKQUAD_AGENT_INBOX_BATCH_SIZE", "5")},
 			},
 			LivenessProbe:  httpProbe("/healthz"),
 			ReadinessProbe: httpProbe("/readyz"),
@@ -114,6 +118,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return idleRequeue(&agent, replicas, time.Now), nil
+}
+
+func envOrDefault(name string, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
 
 // SetupWithManager registers the Agent controller with a controller-runtime

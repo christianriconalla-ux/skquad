@@ -6,8 +6,11 @@ from pathlib import Path
 
 from skquad_runtime.runtime import (
     ControlPlaneClient,
+    DefaultMessageHandler,
     LiteLLMTaskHandler,
+    MessageResult,
     RuntimeMemory,
+    RuntimeMessage,
     RuntimeResource,
     RuntimeTask,
     RuntimeTaskContext,
@@ -18,6 +21,8 @@ from skquad_runtime.runtime import (
     load_bootstrap_config,
     load_runtime_plugins,
     poll_once,
+    run_inbox_once,
+    run_task_loop,
     read_secret_value,
     run_task_once,
 )
@@ -38,6 +43,9 @@ class RuntimeBootstrapTest(unittest.TestCase):
                 "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": "/tmp/credentials/gateway",
                 "SKQUAD_CONTROL_PLANE_URL": "http://api",
                 "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                "SKQUAD_TASK_POLL_INTERVAL_SECONDS": "7.5",
+                "SKQUAD_INBOX_POLL_INTERVAL_SECONDS": "2.5",
+                "SKQUAD_INBOX_BATCH_SIZE": "3",
             }
         )
 
@@ -48,6 +56,9 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(config.default_model, "openai/gpt-4o-mini")
         self.assertEqual(config.plugin_modules, ())
         self.assertEqual(config.enabled_plugins, ())
+        self.assertEqual(config.task_poll_interval_seconds, 7.5)
+        self.assertEqual(config.inbox_poll_interval_seconds, 2.5)
+        self.assertEqual(config.inbox_batch_size, 3)
         self.assertEqual(config.agent_credential_path, Path("/tmp/credentials/agent"))
         self.assertEqual(config.virtual_key_path, Path("/tmp/credentials/gateway"))
         self.assertTrue(config.task_loop_enabled)
@@ -220,6 +231,36 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(context.memory[0].content, "remember this")
         self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/tasks/task-1/context")
 
+    def test_control_plane_client_lists_and_acks_messages(self):
+        calls = []
+
+        def opener(req):
+            calls.append(req)
+            if req.full_url.endswith("/ack"):
+                return FakeResponse(
+                    200,
+                    b'{"id":"message-1","from_type":"agent","from_id":"agent-0",'
+                    b'"to_agent_id":"agent-1","squad_id":"squad-1","type":"ping",'
+                    b'"payload":{},"status":"delivered","correlation_id":""}',
+                )
+            return FakeResponse(
+                200,
+                b'[{"id":"message-1","from_type":"agent","from_id":"agent-0",'
+                b'"to_agent_id":"agent-1","squad_id":"squad-1","type":"ping",'
+                b'"payload":{"message":"wake up"},"status":"pending","correlation_id":""}]',
+            )
+
+        client = ControlPlaneClient("http://control-plane", "agent-1", "credential", opener=opener)
+
+        messages = client.list_messages()
+        acked = client.ack_message("message-1")
+
+        self.assertEqual(messages[0].message_type, "ping")
+        self.assertEqual(messages[0].payload["message"], "wake up")
+        self.assertEqual(acked.status, "delivered")
+        self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/messages")
+        self.assertEqual(calls[1].full_url, "http://control-plane/api/v1/agents/me/messages/message-1/ack")
+
     def test_poll_once_reports_idle_without_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             credential = Path(tmp) / "agent"
@@ -284,6 +325,58 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(client.completed, [("task-1", "done")])
             self.assertEqual(client.completion_summaries, ["Ship it."])
             self.assertEqual(client.persist_memory, [True])
+
+    def test_run_inbox_once_acks_successful_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(
+                claimed_task=None,
+                messages=[fake_message("message-1", "ping"), fake_message("message-2", "reply")],
+            )
+
+            result = run_inbox_once(config, SuccessfulMessageHandler(), client, max_messages=1)
+
+            self.assertEqual(result.fetched, 2)
+            self.assertEqual(result.processed, 1)
+            self.assertEqual(result.failed, 0)
+            self.assertEqual(client.acked_messages, ["message-1"])
+            self.assertEqual(client.heartbeats, ["busy", "idle"])
+
+    def test_run_inbox_once_leaves_failed_messages_pending_for_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(
+                claimed_task=None,
+                messages=[fake_message("message-1", "handoff")],
+            )
+
+            result = run_inbox_once(config, DefaultMessageHandler(), client)
+
+            self.assertEqual(result.processed, 0)
+            self.assertEqual(result.failed, 1)
+            self.assertEqual(client.acked_messages, [])
+
+    def test_task_loop_runs_bounded_inbox_batch_and_one_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(
+                claimed_task=fake_task("task-1"),
+                messages=[fake_message("message-1", "ping"), fake_message("message-2", "reply")],
+            )
+            stop_event = StopAfterSleep()
+
+            run_task_loop(
+                config,
+                StaticTaskHandler(TaskResult(status="done")),
+                message_handler=SuccessfulMessageHandler(),
+                client=client,
+                poll_interval_seconds=0.1,
+                stop_event=stop_event,
+                sleeper=stop_event.sleep,
+            )
+
+            self.assertEqual(client.acked_messages, ["message-1", "message-2"])
+            self.assertEqual(client.completed, [("task-1", "done")])
 
     def test_run_task_once_blocks_when_handler_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -628,13 +721,15 @@ class FakeResponse:
 
 
 class FakeControlPlaneClient:
-    def __init__(self, claimed_task):
+    def __init__(self, claimed_task, messages=None):
         self.claimed_task = claimed_task
+        self.messages = messages or []
         self.heartbeats = []
         self.completed = []
         self.completion_summaries = []
         self.persist_memory = []
         self.blocked = []
+        self.acked_messages = []
 
     def claim_task(self):
         return self.claimed_task
@@ -642,6 +737,13 @@ class FakeControlPlaneClient:
     def heartbeat(self, status):
         self.heartbeats.append(status)
         return {}
+
+    def list_messages(self):
+        return self.messages
+
+    def ack_message(self, message_id):
+        self.acked_messages.append(message_id)
+        return fake_message(message_id, "ping", status="delivered")
 
     def complete_task(self, task_id, status="in-review", summary="", persist_memory=False):
         self.completed.append((task_id, status))
@@ -660,6 +762,22 @@ class StaticTaskHandler:
 
     def handle_task(self, _task, _config):
         return self.result
+
+
+class SuccessfulMessageHandler:
+    def handle_message(self, _message, _config):
+        return MessageResult(ok=True, summary="ok")
+
+
+class StopAfterSleep:
+    def __init__(self):
+        self.stopped = False
+
+    def is_set(self):
+        return self.stopped
+
+    def sleep(self, _seconds):
+        self.stopped = True
 
 
 class FakeContextClient:
@@ -740,6 +858,20 @@ def fake_task(task_id, status="in-progress"):
         description="",
         status=status,
         assignee_agent_id="agent-1",
+    )
+
+
+def fake_message(message_id, message_type, status="pending"):
+    return RuntimeMessage(
+        id=message_id,
+        from_type="agent",
+        from_id="agent-0",
+        to_agent_id="agent-1",
+        squad_id="squad-1",
+        message_type=message_type,
+        payload={"message": "hello"},
+        status=status,
+        correlation_id="",
     )
 
 

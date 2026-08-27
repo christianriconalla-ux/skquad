@@ -31,7 +31,8 @@ operator/
   `status.idleSince + spec.idleTimeout` before scaling inactive agents to zero,
   uses the squad agent ServiceAccount, mounts agent credential/virtual-key
   Secrets when the Agent CR names them, passes runtime bootstrap env vars including
-  provider ID, default model alias, and control-plane/gateway URLs, enables the runtime task loop, configures
+  provider ID, default model alias, control-plane/gateway URLs, and task/inbox
+  polling settings, enables the runtime task loop, configures
   `/healthz` and `/readyz` probes, and writes basic ready status
 - Helm CRDs for `squads.skquad.io` and `agents.skquad.io`
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,

@@ -26,7 +26,9 @@ The current chart installs:
 - Optional Kubernetes Ingress routing `/api` to the API server and `/` to the
   web app
 - Runtime URL defaults so generated Agent CRs point pods back at the chart's API
-  server and LLM gateway services.
+  server and LLM gateway services
+- Agent runtime defaults for idle timeout, task poll interval, inbox poll
+  interval, and inbox batch size.
 
 For production installs, set `postgres.existingSecret` and
 `apiServer.databaseUrlSecret.name` so database credentials and the API database
@@ -35,5 +37,11 @@ URL come from a pre-created Secret instead of chart values.
 Override `apiServer.runtimeControlPlaneUrl` or
 `apiServer.runtimeLlmGatewayUrl` when agent pods must call non-chart service
 endpoints.
+
+Runtime polling defaults are configured through `agent.idleTimeout`,
+`agent.taskPollIntervalSeconds`, `agent.inboxPollIntervalSeconds`, and
+`agent.inboxBatchSize`. The chart passes those values to the operator, and the
+operator injects the corresponding `SKQUAD_*` env vars into generated agent
+pods.
 
 Public DNS/TLS values and external database hardening are still upcoming slices.
