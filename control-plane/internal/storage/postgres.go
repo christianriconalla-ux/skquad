@@ -613,6 +613,80 @@ func (p *PostgresStore) ListResources(ctx context.Context, typ domain.ResourceTy
 	return resources, mapPgErr(rows.Err())
 }
 
+func (p *PostgresStore) GrantAgentPermission(ctx context.Context, perm *domain.AgentPermission) error {
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO agent_permissions (agent_id, resource_type, resource_id, granted_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (agent_id, resource_type, resource_id) DO NOTHING
+	`, perm.AgentID, perm.ResourceType, perm.ResourceID, perm.GrantedBy)
+	return mapPgErr(err)
+}
+
+func (p *PostgresStore) RevokeAgentPermission(ctx context.Context, agentID string, typ domain.ResourceType, resourceID string) error {
+	_, err := p.pool.Exec(ctx, `
+		DELETE FROM agent_permissions
+		WHERE agent_id = $1 AND resource_type = $2 AND resource_id = $3
+	`, agentID, typ, resourceID)
+	return mapPgErr(err)
+}
+
+func (p *PostgresStore) ListAgentPermissions(ctx context.Context, agentID string) ([]*domain.AgentPermission, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id::text, agent_id::text, resource_type, resource_id::text, granted_by::text, created_at
+		FROM agent_permissions
+		WHERE agent_id = $1
+		ORDER BY resource_type, resource_id
+	`, agentID)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+
+	var perms []*domain.AgentPermission
+	for rows.Next() {
+		perm, err := scanAgentPermission(rows)
+		if err != nil {
+			return nil, err
+		}
+		perms = append(perms, perm)
+	}
+	return perms, mapPgErr(rows.Err())
+}
+
+func (p *PostgresStore) SetAgentPermissions(ctx context.Context, agentID string, perms []domain.AgentPermission) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_permissions WHERE agent_id = $1`, agentID); err != nil {
+		return mapPgErr(err)
+	}
+	for _, perm := range perms {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO agent_permissions (agent_id, resource_type, resource_id, granted_by)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (agent_id, resource_type, resource_id) DO NOTHING
+		`, agentID, perm.ResourceType, perm.ResourceID, perm.GrantedBy); err != nil {
+			return mapPgErr(err)
+		}
+	}
+	return mapPgErr(tx.Commit(ctx))
+}
+
+func (p *PostgresStore) AgentHasPermission(ctx context.Context, agentID string, typ domain.ResourceType, resourceID string) (bool, error) {
+	var allowed bool
+	err := p.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM agent_permissions
+			WHERE agent_id = $1 AND resource_type = $2 AND resource_id = $3
+		)
+	`, agentID, typ, resourceID).Scan(&allowed)
+	return allowed, mapPgErr(err)
+}
+
 func (p *PostgresStore) RecordMetering(ctx context.Context, event *domain.MeteringEvent) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO metering (
@@ -941,6 +1015,21 @@ func scanResource(row scanner) (*domain.RegistryResource, error) {
 		return nil, mapPgErr(err)
 	}
 	return &r, nil
+}
+
+func scanAgentPermission(row scanner) (*domain.AgentPermission, error) {
+	var p domain.AgentPermission
+	if err := row.Scan(
+		&p.ID,
+		&p.AgentID,
+		&p.ResourceType,
+		&p.ResourceID,
+		&p.GrantedBy,
+		&p.CreatedAt,
+	); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return &p, nil
 }
 
 func scanTask(row scanner) (*domain.Task, error) {

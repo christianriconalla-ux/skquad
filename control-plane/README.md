@@ -51,6 +51,8 @@ Implemented slice:
 - `GET /api/v1/auth/me` with dev-mode principal provisioning
 - Squad CRUD under `/api/v1/squads`
 - Agent CRUD for squads
+- Agent identity create/rotate endpoints with generated secret/key references
+- Agent registry permission list/set endpoints
 - Board retrieval and task create/update/move/delete
 - Access grant create/list/delete
 - LLM provider registry create/list/get/update/deprecate
@@ -62,11 +64,10 @@ Implemented slice:
 - Optional Kubernetes `Squad`/`Agent` CR writer for squad/agent mutations
 - Consistent JSON error envelopes
 - Process-local in-memory store for development and handler tests
-- Postgres-backed user/squad/agent/identity/board/task/access-grant/registry,
-  metering, and audit storage
+- Postgres-backed user/squad/agent/identity/permission/board/task/access-grant/
+  registry, metering, and audit storage
 - OIDC bearer JWT validation with first-login user provisioning
 - Owner/admin/granted-user read authorization for squad resources
 - Platform-admin authorization for registry writes
 
-Next slices are agent-facing auth, agent identity creation/rotation routes, and
-operator reconciliation.
+Next slices are agent-facing auth and operator reconciliation.

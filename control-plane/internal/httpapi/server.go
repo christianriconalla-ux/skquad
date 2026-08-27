@@ -28,6 +28,7 @@ type Store interface {
 	storage.BoardStore
 	storage.GrantStore
 	storage.RegistryStore
+	storage.PermissionStore
 	storage.MeteringStore
 	storage.AuditStore
 	storage.TaskStore
@@ -106,6 +107,10 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 		r.Get("/agents/{agentID}", s.getAgent)
 		r.Patch("/agents/{agentID}", s.updateAgent)
 		r.Delete("/agents/{agentID}", s.deleteAgent)
+		r.Post("/agents/{agentID}/identity", s.createAgentIdentity)
+		r.Post("/agents/{agentID}/identity/rotate", s.rotateAgentIdentity)
+		r.Get("/agents/{agentID}/permissions", s.listAgentPermissions)
+		r.Put("/agents/{agentID}/permissions", s.setAgentPermissions)
 
 		r.Get("/squads/{squadID}/board", s.getBoard)
 		r.Get("/squads/{squadID}/metering", s.getSquadMetering)
@@ -218,6 +223,15 @@ func registryTypeFromRequest(w http.ResponseWriter, r *http.Request) (domain.Res
 		return domain.ResProjectWorkspace, true
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "registry resource type not found")
+		return "", false
+	}
+}
+
+func resourceTypeFromString(value string) (domain.ResourceType, bool) {
+	switch domain.ResourceType(value) {
+	case domain.ResLLMProvider, domain.ResSkill, domain.ResTool, domain.ResAPI, domain.ResKnowledgeBase, domain.ResProjectWorkspace:
+		return domain.ResourceType(value), true
+	default:
 		return "", false
 	}
 }
@@ -851,6 +865,130 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
+	agent, ok := s.loadOwnedAgent(w, r)
+	if !ok {
+		return
+	}
+	squad, err := s.store.GetSquad(r.Context(), agent.SquadID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	u := currentUser(r.Context())
+	identity := &domain.AgentIdentity{
+		AgentID:       agent.ID,
+		CredentialRef: generatedCredentialRef(squad.Namespace, agent.ID),
+		VirtualKeyRef: generatedVirtualKeyRef(agent.ID),
+		CreatedBy:     u.ID,
+	}
+	created, err := s.store.CreateAgentIdentity(r.Context(), identity)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	s.recordUserAudit(r, "agent_identity.create", "agent_identity", created.ID, agent.SquadID, nil)
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) rotateAgentIdentity(w http.ResponseWriter, r *http.Request) {
+	agent, ok := s.loadOwnedAgent(w, r)
+	if !ok {
+		return
+	}
+	squad, err := s.store.GetSquad(r.Context(), agent.SquadID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	identity, err := s.store.RotateAgentIdentity(r.Context(), agent.ID, generatedCredentialRef(squad.Namespace, agent.ID))
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	s.recordUserAudit(r, "agent_identity.rotate", "agent_identity", identity.ID, agent.SquadID, nil)
+	writeJSON(w, http.StatusOK, identity)
+}
+
+func (s *Server) listAgentPermissions(w http.ResponseWriter, r *http.Request) {
+	agent, ok := s.loadOwnedAgent(w, r)
+	if !ok {
+		return
+	}
+	perms, err := s.store.ListAgentPermissions(r.Context(), agent.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, perms)
+}
+
+func (s *Server) setAgentPermissions(w http.ResponseWriter, r *http.Request) {
+	agent, ok := s.loadOwnedAgent(w, r)
+	if !ok {
+		return
+	}
+	var req []struct {
+		ResourceType string `json:"resource_type"`
+		ResourceID   string `json:"resource_id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	u := currentUser(r.Context())
+	perms := make([]domain.AgentPermission, 0, len(req))
+	seen := map[string]bool{}
+	for _, item := range req {
+		typ, ok := resourceTypeFromString(item.ResourceType)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "bad_request", "resource_type is invalid")
+			return
+		}
+		resourceID := strings.TrimSpace(item.ResourceID)
+		if resourceID == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "resource_id is required")
+			return
+		}
+		if err := s.ensureRegistryResourceExists(r.Context(), typ, resourceID); err != nil {
+			writeStorageError(w, err)
+			return
+		}
+		key := string(typ) + ":" + resourceID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		perms = append(perms, domain.AgentPermission{
+			AgentID:      agent.ID,
+			ResourceType: typ,
+			ResourceID:   resourceID,
+			GrantedBy:    u.ID,
+		})
+	}
+	if err := s.store.SetAgentPermissions(r.Context(), agent.ID, perms); err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	current, err := s.store.ListAgentPermissions(r.Context(), agent.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	metadata, _ := json.Marshal(map[string]int{"count": len(current)})
+	s.recordUserAudit(r, "agent_permissions.set", "agent", agent.ID, agent.SquadID, metadata)
+	writeJSON(w, http.StatusOK, current)
+}
+
+func (s *Server) ensureRegistryResourceExists(ctx context.Context, typ domain.ResourceType, resourceID string) error {
+	if typ == domain.ResLLMProvider {
+		_, err := s.store.GetLLMProvider(ctx, resourceID)
+		return err
+	}
+	_, err := s.store.GetResource(ctx, typ, resourceID)
+	return err
+}
+
 func (s *Server) getBoard(w http.ResponseWriter, r *http.Request) {
 	squad, ok := s.loadAccessibleSquad(w, r)
 	if !ok {
@@ -1313,4 +1451,12 @@ func namespaceFor(name string) string {
 		slug = slug[:40]
 	}
 	return fmt.Sprintf("squad-%s-%s", slug, uuid.NewString()[:8])
+}
+
+func generatedCredentialRef(namespace, agentID string) string {
+	return fmt.Sprintf("k8s://%s/agent-%s-credential-%s", namespace, agentID, uuid.NewString()[:8])
+}
+
+func generatedVirtualKeyRef(agentID string) string {
+	return "llm-gateway://virtual-keys/agent-" + agentID
 }

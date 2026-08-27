@@ -310,6 +310,100 @@ func TestSquadAndAgentMutationsWriteCustomResources(t *testing.T) {
 	}, crWriter.ops)
 }
 
+func TestAgentIdentityCreateAndRotate(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Identity Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Identity Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	require.NotEmpty(t, identity.ID)
+	require.Equal(t, agent.ID, identity.AgentID)
+	require.Contains(t, identity.CredentialRef, "k8s://"+squad.Namespace+"/agent-"+agent.ID+"-credential-")
+	require.Equal(t, "llm-gateway://virtual-keys/agent-"+agent.ID, identity.VirtualKeyRef)
+
+	var conflict map[string]map[string]string
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusConflict, &conflict)
+	require.Equal(t, "conflict", conflict["error"]["code"])
+
+	var rotated domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity/rotate", nil, http.StatusOK, &rotated)
+	require.Equal(t, identity.ID, rotated.ID)
+	require.NotEqual(t, identity.CredentialRef, rotated.CredentialRef)
+	require.False(t, rotated.RotatedAt.IsZero())
+	require.Equal(t, identity.VirtualKeyRef, rotated.VirtualKeyRef)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "agent_identity.create")
+	require.Contains(t, auditActions(audit), "agent_identity.rotate")
+}
+
+func TestAgentPermissionsSetAndList(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Permission Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Permissioned Agent",
+	}, http.StatusCreated, &agent)
+
+	var provider domain.LLMProvider
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/llm-providers", map[string]any{
+		"name":     "Permission Provider",
+		"kind":     "openai-compatible",
+		"base_url": "http://localhost:8123/v1",
+	}, http.StatusCreated, &provider)
+
+	var skill domain.RegistryResource
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/skills", map[string]any{
+		"name": "permission-skill",
+	}, http.StatusCreated, &skill)
+
+	var perms []domain.AgentPermission
+	doJSON(t, handler, http.MethodPut, "/api/v1/agents/"+agent.ID+"/permissions", []map[string]string{
+		{"resource_type": string(domain.ResLLMProvider), "resource_id": provider.ID},
+		{"resource_type": string(domain.ResSkill), "resource_id": skill.ID},
+		{"resource_type": string(domain.ResSkill), "resource_id": skill.ID},
+	}, http.StatusOK, &perms)
+	require.Len(t, perms, 2)
+
+	var listed []domain.AgentPermission
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID+"/permissions", nil, http.StatusOK, &listed)
+	require.Equal(t, perms, listed)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "agent_permissions.set")
+
+	var body map[string]map[string]string
+	doJSON(t, handler, http.MethodPut, "/api/v1/agents/"+agent.ID+"/permissions", []map[string]string{
+		{"resource_type": "not-real", "resource_id": provider.ID},
+	}, http.StatusBadRequest, &body)
+	require.Equal(t, "bad_request", body["error"]["code"])
+
+	doJSON(t, handler, http.MethodPut, "/api/v1/agents/"+agent.ID+"/permissions", []map[string]string{
+		{"resource_type": string(domain.ResTool), "resource_id": provider.ID},
+	}, http.StatusNotFound, &body)
+	require.Equal(t, "not_found", body["error"]["code"])
+}
+
 func testConfig() *config.Config {
 	return &config.Config{
 		Addr:               ":0",

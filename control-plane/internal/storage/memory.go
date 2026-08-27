@@ -22,11 +22,14 @@ type MemoryStore struct {
 	usersByEmail  map[string]string
 	squads        map[string]*domain.Squad
 	agents        map[string]*domain.Agent
+	identities    map[string]*domain.AgentIdentity
+	identityAgent map[string]string
 	boards        map[string]*domain.Board
 	boardsBySquad map[string]string
 	grants        map[string]*domain.AccessGrant
 	llmProviders  map[string]*domain.LLMProvider
 	resources     map[string]*domain.RegistryResource
+	permissions   map[string]*domain.AgentPermission
 	metering      map[string]*domain.MeteringEvent
 	auditLog      map[string]*domain.AuditEntry
 	tasks         map[string]*domain.Task
@@ -39,11 +42,14 @@ func NewMemoryStore() *MemoryStore {
 		usersByEmail:  map[string]string{},
 		squads:        map[string]*domain.Squad{},
 		agents:        map[string]*domain.Agent{},
+		identities:    map[string]*domain.AgentIdentity{},
+		identityAgent: map[string]string{},
 		boards:        map[string]*domain.Board{},
 		boardsBySquad: map[string]string{},
 		grants:        map[string]*domain.AccessGrant{},
 		llmProviders:  map[string]*domain.LLMProvider{},
 		resources:     map[string]*domain.RegistryResource{},
+		permissions:   map[string]*domain.AgentPermission{},
 		metering:      map[string]*domain.MeteringEvent{},
 		auditLog:      map[string]*domain.AuditEntry{},
 		tasks:         map[string]*domain.Task{},
@@ -331,16 +337,47 @@ func (m *MemoryStore) SetAgentStatus(_ context.Context, id string, status domain
 	return nil
 }
 
-func (m *MemoryStore) CreateAgentIdentity(context.Context, *domain.AgentIdentity) (*domain.AgentIdentity, error) {
-	return nil, ErrNotFound
+func (m *MemoryStore) CreateAgentIdentity(_ context.Context, i *domain.AgentIdentity) (*domain.AgentIdentity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agent, ok := m.agents[i.AgentID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if _, ok := m.identityAgent[i.AgentID]; ok {
+		return nil, ErrConflict
+	}
+	created := cloneAgentIdentity(i)
+	created.ID = uuid.NewString()
+	created.CreatedAt = time.Now().UTC()
+	m.identities[created.ID] = created
+	m.identityAgent[created.AgentID] = created.ID
+	agent.IdentityID = created.ID
+	agent.UpdatedAt = created.CreatedAt
+	return cloneAgentIdentity(created), nil
 }
 
-func (m *MemoryStore) GetAgentIdentity(context.Context, string) (*domain.AgentIdentity, error) {
-	return nil, ErrNotFound
+func (m *MemoryStore) GetAgentIdentity(_ context.Context, agentID string) (*domain.AgentIdentity, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	identityID, ok := m.identityAgent[agentID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return cloneAgentIdentity(m.identities[identityID]), nil
 }
 
-func (m *MemoryStore) RotateAgentIdentity(context.Context, string, string) (*domain.AgentIdentity, error) {
-	return nil, ErrNotFound
+func (m *MemoryStore) RotateAgentIdentity(_ context.Context, agentID string, credentialRef string) (*domain.AgentIdentity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	identityID, ok := m.identityAgent[agentID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	identity := m.identities[identityID]
+	identity.CredentialRef = credentialRef
+	identity.RotatedAt = time.Now().UTC()
+	return cloneAgentIdentity(identity), nil
 }
 
 func (m *MemoryStore) CreateGrant(_ context.Context, g *domain.AccessGrant) (*domain.AccessGrant, error) {
@@ -566,6 +603,86 @@ func (m *MemoryStore) ListResources(_ context.Context, typ domain.ResourceType) 
 	return out, nil
 }
 
+func (m *MemoryStore) GrantAgentPermission(_ context.Context, p *domain.AgentPermission) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.agents[p.AgentID]; !ok {
+		return ErrNotFound
+	}
+	key := permissionKey(p.AgentID, p.ResourceType, p.ResourceID)
+	if _, ok := m.permissions[key]; ok {
+		return nil
+	}
+	created := cloneAgentPermission(p)
+	created.ID = uuid.NewString()
+	created.CreatedAt = time.Now().UTC()
+	m.permissions[key] = created
+	return nil
+}
+
+func (m *MemoryStore) RevokeAgentPermission(_ context.Context, agentID string, typ domain.ResourceType, resourceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return ErrNotFound
+	}
+	delete(m.permissions, permissionKey(agentID, typ, resourceID))
+	return nil
+}
+
+func (m *MemoryStore) ListAgentPermissions(_ context.Context, agentID string) ([]*domain.AgentPermission, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return nil, ErrNotFound
+	}
+	out := []*domain.AgentPermission{}
+	for _, perm := range m.permissions {
+		if perm.AgentID == agentID {
+			out = append(out, cloneAgentPermission(perm))
+		}
+	}
+	slices.SortFunc(out, func(a, b *domain.AgentPermission) int {
+		if a.ResourceType != b.ResourceType {
+			return strings.Compare(string(a.ResourceType), string(b.ResourceType))
+		}
+		return strings.Compare(a.ResourceID, b.ResourceID)
+	})
+	return out, nil
+}
+
+func (m *MemoryStore) SetAgentPermissions(_ context.Context, agentID string, perms []domain.AgentPermission) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return ErrNotFound
+	}
+	for key, perm := range m.permissions {
+		if perm.AgentID == agentID {
+			delete(m.permissions, key)
+		}
+	}
+	now := time.Now().UTC()
+	for _, perm := range perms {
+		created := cloneAgentPermission(&perm)
+		created.ID = uuid.NewString()
+		created.AgentID = agentID
+		created.CreatedAt = now
+		m.permissions[permissionKey(agentID, created.ResourceType, created.ResourceID)] = created
+	}
+	return nil
+}
+
+func (m *MemoryStore) AgentHasPermission(_ context.Context, agentID string, typ domain.ResourceType, resourceID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return false, ErrNotFound
+	}
+	_, ok := m.permissions[permissionKey(agentID, typ, resourceID)]
+	return ok, nil
+}
+
 func (m *MemoryStore) RecordMetering(_ context.Context, event *domain.MeteringEvent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -778,6 +895,14 @@ func cloneAgent(a *domain.Agent) *domain.Agent {
 	return &v
 }
 
+func cloneAgentIdentity(i *domain.AgentIdentity) *domain.AgentIdentity {
+	if i == nil {
+		return nil
+	}
+	v := *i
+	return &v
+}
+
 func cloneBoard(b *domain.Board) *domain.Board {
 	if b == nil {
 		return nil
@@ -821,6 +946,14 @@ func cloneResource(r *domain.RegistryResource) *domain.RegistryResource {
 	return &v
 }
 
+func cloneAgentPermission(p *domain.AgentPermission) *domain.AgentPermission {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
 func cloneMeteringEvent(event *domain.MeteringEvent) *domain.MeteringEvent {
 	if event == nil {
 		return nil
@@ -836,4 +969,8 @@ func cloneAuditEntry(entry *domain.AuditEntry) *domain.AuditEntry {
 	v := *entry
 	v.Metadata = slices.Clone(entry.Metadata)
 	return &v
+}
+
+func permissionKey(agentID string, typ domain.ResourceType, resourceID string) string {
+	return agentID + ":" + string(typ) + ":" + resourceID
 }
