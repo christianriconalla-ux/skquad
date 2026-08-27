@@ -1,8 +1,7 @@
 # skquad CI/CD
 
-> **Status:** Implemented validation CI, container image build/publish, and an
-> initial lab GitOps deployment target. Image-tag promotion automation remains
-> follow-up work.
+> **Status:** Implemented validation CI, container image build/publish, and a
+> lab GitOps deployment target with immutable image-tag promotion.
 
 The GitHub Actions workflow in `.github/workflows/ci.yml` is the main quality
 gate for the monorepo. It runs on pushes to `main` and on pull requests.
@@ -14,8 +13,8 @@ also mirrors to Docker Hub when Docker Hub repository secrets are configured.
 
 The lab deployment is managed from `/home/ross/projects/k3s-cluster` through
 the ArgoCD Application `apps/app-skquad.yaml`. It tracks this repository's
-`charts/skquad` path on `main`, deploys into `skquad-system`, uses the
-published GHCR `latest` image tags, and keeps ingress disabled while the chart
+`charts/skquad` path on `main`, deploys into `skquad-system`, pins the promoted
+GHCR `sha-<short-sha>` image set, and keeps ingress disabled while the chart
 still defaults to development authentication.
 
 ## Validation Jobs
@@ -25,14 +24,15 @@ still defaults to development authentication.
 | Control plane | `go vet ./...` and `go test ./...` in `control-plane/` |
 | Operator | `go vet ./...` and `go test ./...` in `operator/` |
 | Agent runtime | installs the Python package, runs `unittest`, and compiles runtime/test modules |
-| LLM gateway | validates Python project metadata and required LiteLLM bootstrap config fields |
+| LLM gateway | validates Python project metadata/config, builds the gateway image, and checks generated Prisma client artifacts |
 | Helm chart | `helm lint`, default chart render, and provider-configured gateway render |
 | Web | deterministic `npm ci` and `next build` |
 
 ## Current Boundaries
 
-- The lab GitOps app deploys Skquad, but immutable image-tag promotion is not
-  automated yet. It currently follows the chart on `main` with `latest` tags.
+- Image-tag promotion is currently a deliberate GitOps commit to
+  `/home/ross/projects/k3s-cluster/apps/app-skquad.yaml`; fully automated image
+  updater wiring is still optional follow-up work.
 - Kubernetes server-side dry-runs are still done locally against the lab
   cluster when a chart change needs API admission validation.
 - The web job builds the current placeholder app shell; product UI coverage is
@@ -64,7 +64,6 @@ secrets:
 
 ## Follow-Up Work
 
-- Add integration/end-to-end tests once deployable images and test fixtures are
-  available.
-- Add immutable image-tag promotion, for example by committing `sha-<short-sha>`
-  values to the GitOps repo or installing/configuring ArgoCD Image Updater.
+- Add integration/end-to-end tests once representative fixtures are available.
+- Optionally replace manual GitOps promotion commits with ArgoCD Image Updater
+  or a guarded workflow that opens promotion pull requests.

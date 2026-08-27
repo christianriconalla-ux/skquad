@@ -86,6 +86,12 @@ jobs:
           for required in ("model_list:", "general_settings:", "LITELLM_MASTER_KEY", "DATABASE_URL"):
               assert required in config
           PY
+      - name: Build gateway image
+        run: docker build -t skquad-llm-gateway-ci ./llm-gateway
+      - name: Smoke test Prisma client
+        run: >-
+          docker run --rm --entrypoint python skquad-llm-gateway-ci
+          -c "from pathlib import Path; generated = Path('/usr/local/lib/python3.11/site-packages/prisma/client.py'); assert generated.exists(), f'missing generated Prisma client: {generated}'; import prisma.engine.errors; print('OK: Prisma client generated and importable')"
 
   helm:
     name: Helm chart

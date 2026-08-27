@@ -7,8 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml ./
 COPY config.yaml /etc/skquad/config.yaml
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --upgrade pip \
     && python -m pip install . \
+    && prisma generate --schema /usr/local/lib/python3.11/site-packages/litellm/proxy/schema.prisma \
     && useradd --create-home --uid 65532 --shell /usr/sbin/nologin skquad
 
 USER 65532:65532
