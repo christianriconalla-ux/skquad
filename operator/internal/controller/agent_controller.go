@@ -21,6 +21,7 @@ import (
 
 const (
 	agentContainerName = "agent"
+	agentFinalizer     = "skquad.io/agent-cleanup"
 	defaultAgentImage  = "skquad/agent-runtime:0.1.0"
 	credentialsMount   = "/var/run/skquad/credentials"
 	runtimeHTTPPort    = int32(8080)
@@ -37,6 +38,26 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	var agent skquadv1.Agent
 	if err := r.Get(ctx, req.NamespacedName, &agent); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if agent.ObjectMeta.DeletionTimestamp.IsZero() {
+		if controllerutil.AddFinalizer(&agent, agentFinalizer) {
+			if err := r.Update(ctx, &agent); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+	} else {
+		if controllerutil.ContainsFinalizer(&agent, agentFinalizer) {
+			if err := r.cleanupAgent(ctx, &agent); err != nil {
+				return ctrl.Result{}, err
+			}
+			controllerutil.RemoveFinalizer(&agent, agentFinalizer)
+			if err := r.Update(ctx, &agent); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
 	}
 
 	namespace, err := r.squadNamespaceForAgent(ctx, &agent)
@@ -118,6 +139,16 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return idleRequeue(&agent, replicas, time.Now), nil
+}
+
+func (r *AgentReconciler) cleanupAgent(ctx context.Context, agent *skquadv1.Agent) error {
+	namespace, err := r.squadNamespaceForAgent(ctx, agent)
+	if err != nil {
+		return err
+	}
+	return deleteIfExists(ctx, r.Client, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: namespace},
+	})
 }
 
 func envOrDefault(name string, fallback string) string {

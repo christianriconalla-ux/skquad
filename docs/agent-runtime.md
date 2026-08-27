@@ -108,11 +108,14 @@ busy, invoke a supplied handler, complete to `in-review`/`done`, block on
 handler failure or invalid status, then report idle. The default
 `LiteLLMTaskHandler` now reads the mounted LLM gateway virtual key, fetches
 task-scoped context from `/api/v1/agents/me/tasks/:id/context`, calls the
-OpenAI-compatible gateway through LiteLLM, exposes plugin tool schemas, invokes
-plugin tool calls, and maps `SKQUAD_STATUS: done|blocked` markers into task
-completion state. The fetched context includes only the assigned task, active
-granted resource descriptors, and recent scoped memory rows; provider API-key
-refs and resource auth refs are not exposed to the runtime.
+OpenAI-compatible gateway through LiteLLM, exposes only currently granted plugin
+tool schemas, invokes plugin tool calls, and maps `SKQUAD_STATUS: done|blocked`
+markers into task completion state. The fetched context includes only the
+assigned task, active granted resource descriptors, and recent scoped memory
+rows; provider API-key refs and resource auth refs are not exposed to the
+runtime. Context is fetched for each task invocation and is not cached on the
+long-lived handler, so resource revocations, grants, and memory updates take
+effect without restarting the pod.
 
 ---
 
@@ -166,12 +169,14 @@ class Plugin(Protocol):
   (knowledge bases, git/Jira/Confluence workspaces). They use the agent's
   permissions + credentials.
 
-The runtime loads configured plugin modules and exposes their tools to the LLM.
+The runtime loads configured plugin modules but exposes tools per task only
+when the current task context includes a matching granted `skill` or `tool`
+resource.
 Current loading is importlib-based: `SKQUAD_PLUGIN_MODULES` names modules or
 module attributes, and `SKQUAD_ENABLED_PLUGINS` optionally filters by plugin
-name. Permission-scoped registry discovery already informs task context;
-automatic conversion from granted registry descriptors to import specs is a
-later packaging/registry slice.
+name. Permission-scoped registry discovery informs task context; automatic
+conversion from granted registry descriptors to import specs is a later
+packaging/registry slice.
 
 ---
 

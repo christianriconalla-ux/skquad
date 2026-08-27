@@ -113,6 +113,17 @@ When the operator sees a `Squad` CR:
    - `archived` → scale all agents to 0; keep namespace (read-only).
    - `deleted` → delete the namespace (cascades to agents, secrets, policies).
      Audit rows are retained in Postgres.
+4. **Deletion cleanup:** the operator adds a `skquad.io/squad-cleanup`
+   finalizer and explicitly deletes managed base resources plus the managed
+   namespace before releasing the CR. This is required because a namespaced CR
+   in `skquad-system` cannot own a cluster-scoped Namespace through Kubernetes
+   garbage collection.
+
+Current consistency note: operator finalizers now prevent orphaned
+cross-namespace resources during CR deletion. The API still writes CRs
+synchronously from request handlers; a transactional Kubernetes outbox remains
+required so Postgres commits and Kubernetes writes cannot diverge during create,
+update, delete, or rollout failures.
 
 ---
 
@@ -140,6 +151,10 @@ When the operator sees an `Agent` CR:
      no new work.
 4. **Error handling:** crashloop / probe failure → restart; surface to the owner;
    the task is re-queued (idempotent pickup).
+5. **Deletion cleanup:** the operator adds a `skquad.io/agent-cleanup`
+   finalizer and explicitly deletes the agent Deployment in the squad namespace
+   before releasing the Agent CR. This avoids relying on invalid cross-namespace
+   owner references.
 
 ---
 

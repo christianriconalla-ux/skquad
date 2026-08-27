@@ -451,6 +451,7 @@ class LiteLLMTaskHandler:
         context = self.available_task_context(task, config)
         resources = context.resources if context is not None else self.available_resources(config)
         memories = context.memory if context is not None else []
+        plugins = self.available_plugins(resources)
         messages: list[dict[str, object]] = [
             {
                 "role": "system",
@@ -461,7 +462,7 @@ class LiteLLMTaskHandler:
                 "content": task_prompt(task),
             },
         ]
-        tools = self.tool_schemas()
+        tools = self.tool_schemas(plugins)
         completion = self.completion()
         last_content = ""
 
@@ -483,7 +484,7 @@ class LiteLLMTaskHandler:
             if not tool_calls:
                 return TaskResult(status=status_from_content(content), summary=content)
             for call in tool_calls:
-                result = self.invoke_tool(call, config)
+                result = self.invoke_tool(call, config, plugins)
                 if not result.ok:
                     return TaskResult(status="blocked", summary=result.content)
                 messages.append(
@@ -506,9 +507,9 @@ class LiteLLMTaskHandler:
             raise RuntimeError("litellm is required for the default task handler") from exc
         return completion
 
-    def tool_schemas(self) -> list[Mapping[str, object]]:
+    def tool_schemas(self, plugins: list[RuntimePlugin] | None = None) -> list[Mapping[str, object]]:
         schemas: list[Mapping[str, object]] = []
-        for plugin in self.plugins:
+        for plugin in (self.plugins if plugins is None else plugins):
             schemas.extend(plugin.tools())
         return schemas
 
@@ -517,20 +518,29 @@ class LiteLLMTaskHandler:
             return self.resources
         if not self.discover_resources:
             return []
-        self.resources = ControlPlaneClient.from_bootstrap(config).list_resources()
-        return self.resources
+        return ControlPlaneClient.from_bootstrap(config).list_resources()
 
     def available_task_context(
         self, task: RuntimeTask, config: BootstrapConfig
     ) -> RuntimeTaskContext | None:
         if self.resources is not None or not self.discover_resources:
             return None
-        context = ControlPlaneClient.from_bootstrap(config).task_context(task.id)
-        self.resources = context.resources
-        return context
+        return ControlPlaneClient.from_bootstrap(config).task_context(task.id)
 
-    def invoke_tool(self, call: ToolCall, config: BootstrapConfig) -> ToolResult:
-        plugin = next((item for item in self.plugins if item.name == call.name), None)
+    def available_plugins(self, resources: list[RuntimeResource]) -> list[RuntimePlugin]:
+        if self.resources is not None or not self.discover_resources:
+            return list(self.plugins)
+        allowed = granted_plugin_names(resources)
+        return [plugin for plugin in self.plugins if plugin.name in allowed]
+
+    def invoke_tool(
+        self,
+        call: ToolCall,
+        config: BootstrapConfig,
+        plugins: list[RuntimePlugin] | None = None,
+    ) -> ToolResult:
+        candidates = self.plugins if plugins is None else plugins
+        plugin = next((item for item in candidates if item.name == call.name), None)
         if plugin is None:
             return ToolResult(content=f"tool {call.name!r} is not available", ok=False)
         try:
@@ -661,6 +671,25 @@ def memory_prompt_line(memory: RuntimeMemory) -> str:
     source = f"source_task={memory.source_task_id}" if memory.source_task_id else "source=agent"
     content = " ".join(memory.content.split())
     return f"- {source} | {content}"
+
+
+def granted_plugin_names(resources: list[RuntimeResource]) -> set[str]:
+    names: set[str] = set()
+    for resource in resources:
+        if resource.resource_type not in ("skill", "tool"):
+            continue
+        if resource.name:
+            names.add(resource.name)
+        endpoint_prefix = "plugin://"
+        if resource.endpoint.startswith(endpoint_prefix):
+            plugin_name = resource.endpoint[len(endpoint_prefix) :].strip("/")
+            if plugin_name:
+                names.add(plugin_name)
+        for key in ("plugin", "plugin_name", "tool", "tool_name"):
+            value = resource.manifest.get(key)
+            if isinstance(value, str) and value.strip():
+                names.add(value.strip())
+    return names
 
 
 def task_prompt(task: RuntimeTask) -> str:

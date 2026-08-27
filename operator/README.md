@@ -25,7 +25,8 @@ operator/
 - First `Squad` reconciler: creates/labels the configured squad namespace,
   creates the `skquad-agent` ServiceAccount, default-deny NetworkPolicy, DNS and
   platform egress allow policies, starter ResourceQuota, and records basic ready
-  status
+  status. It adds a `skquad.io/squad-cleanup` finalizer and explicitly deletes
+  managed cross-namespace resources plus the managed Namespace on CR deletion.
 - First `Agent` reconciler: resolves the owning squad namespace, creates/updates
   the agent Deployment, scales up from `desiredActive`, waits for
   `status.idleSince + spec.idleTimeout` before scaling inactive agents to zero,
@@ -33,10 +34,12 @@ operator/
   Secrets when the Agent CR names them, passes runtime bootstrap env vars including
   provider ID, default model alias, control-plane/gateway URLs, and task/inbox
   polling settings, enables the runtime task loop, configures
-  `/healthz` and `/readyz` probes, and writes basic ready status
+  `/healthz` and `/readyz` probes, writes basic ready status, and uses a
+  `skquad.io/agent-cleanup` finalizer to delete the cross-namespace Deployment
+  before the Agent CR is released
 - Helm CRDs for `squads.skquad.io` and `agents.skquad.io`
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
   and Deployment
 
-Next slices are dynamic plugin discovery and configurable egress policy
-generation from registry grants.
+Next slices are the transactional Kubernetes outbox, dynamic plugin package
+discovery, and configurable egress policy generation from registry grants.

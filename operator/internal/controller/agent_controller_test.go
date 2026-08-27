@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -14,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	skquadv1 "github.com/rossbrigoli/skquad/operator/internal/api/v1"
 )
@@ -60,6 +62,15 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 		Build()
 	reconciler := &AgentReconciler{Client: k8sClient, Scheme: scheme}
 
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Requeue {
+		t.Fatalf("first reconcile result = %#v, want requeue after finalizer add", result)
+	}
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace},
 	}); err != nil {
@@ -141,6 +152,14 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	if !mounts[0].ReadOnly || !mounts[1].ReadOnly {
 		t.Fatal("secret mounts must be read-only")
 	}
+
+	var updatedAgent skquadv1.Agent
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: agent.Name, Namespace: agent.Namespace}, &updatedAgent); err != nil {
+		t.Fatal(err)
+	}
+	if !controllerutil.ContainsFinalizer(&updatedAgent, agentFinalizer) {
+		t.Fatalf("agent finalizers = %#v, want %q", updatedAgent.Finalizers, agentFinalizer)
+	}
 }
 
 func TestAgentReconcilerScalesInactiveAgentToZero(t *testing.T) {
@@ -155,7 +174,7 @@ func TestAgentReconcilerScalesInactiveAgentToZero(t *testing.T) {
 	}
 
 	agent := &skquadv1.Agent{
-		ObjectMeta: metav1.ObjectMeta{Name: "agent-zero", Namespace: "skquad-system"},
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-zero", Namespace: "skquad-system", Finalizers: []string{agentFinalizer}},
 		Spec: skquadv1.AgentSpec{
 			AgentID: "33333333-3333-3333-3333-333333333333",
 			SquadID: "44444444-4444-4444-4444-444444444444",
@@ -193,7 +212,7 @@ func TestAgentReconcilerWaitsForIdleTimeoutBeforeScaleDown(t *testing.T) {
 	replicas := int32(1)
 	idleSince := metav1.NewTime(time.Now().Add(-1 * time.Minute))
 	agent := &skquadv1.Agent{
-		ObjectMeta: metav1.ObjectMeta{Name: "agent-idle-wait", Namespace: "skquad-system"},
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-idle-wait", Namespace: "skquad-system", Finalizers: []string{agentFinalizer}},
 		Spec: skquadv1.AgentSpec{
 			AgentID:     "55555555-5555-5555-5555-555555555555",
 			SquadID:     "66666666-6666-6666-6666-666666666666",
@@ -237,7 +256,7 @@ func TestAgentReconcilerScalesDownAfterIdleTimeout(t *testing.T) {
 	scheme := testScheme(t)
 	replicas := int32(1)
 	agent := &skquadv1.Agent{
-		ObjectMeta: metav1.ObjectMeta{Name: "agent-idle-expired", Namespace: "skquad-system"},
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-idle-expired", Namespace: "skquad-system", Finalizers: []string{agentFinalizer}},
 		Spec: skquadv1.AgentSpec{
 			AgentID:     "77777777-7777-7777-7777-777777777777",
 			SquadID:     "88888888-8888-8888-8888-888888888888",
@@ -272,6 +291,54 @@ func TestAgentReconcilerScalesDownAfterIdleTimeout(t *testing.T) {
 	}
 	if result.Requeue || result.RequeueAfter != 0 {
 		t.Fatalf("result = %#v, want no requeue after scale down", result)
+	}
+}
+
+func TestAgentReconcilerFinalizerDeletesDeployment(t *testing.T) {
+	t.Parallel()
+
+	scheme := testScheme(t)
+	squad := &skquadv1.Squad{
+		ObjectMeta: metav1.ObjectMeta{Name: "squad-delete-agent", Namespace: "skquad-system"},
+		Spec: skquadv1.SquadSpec{
+			SquadID:   "99999999-9999-9999-9999-999999999999",
+			Namespace: "squad-agent-delete-test",
+		},
+	}
+	agent := &skquadv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "agent-delete",
+			Namespace:  "skquad-system",
+			Finalizers: []string{agentFinalizer},
+		},
+		Spec: skquadv1.AgentSpec{
+			AgentID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			SquadID: squad.Spec.SquadID,
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: squad.Spec.Namespace},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(squad, agent, deployment).
+		Build()
+	reconciler := &AgentReconciler{Client: k8sClient, Scheme: scheme}
+
+	if err := k8sClient.Delete(context.Background(), agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var deleted appsv1.Deployment
+	err := k8sClient.Get(context.Background(), client.ObjectKey{Name: deployment.Name, Namespace: deployment.Namespace}, &deleted)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("deployment still exists or lookup failed: %v", err)
 	}
 }
 

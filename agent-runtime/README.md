@@ -32,9 +32,9 @@ agent-runtime/
   per iteration so messages and tasks do not starve each other.
 - Provides a default `LiteLLMTaskHandler` that reads the mounted LLM gateway
   virtual key, calls the OpenAI-compatible gateway through LiteLLM using the
-  explicit `SKQUAD_DEFAULT_MODEL` model alias, exposes
-  registered plugin tool schemas, discovers granted active resources, and
-  invokes loaded plugin tool calls.
+  explicit `SKQUAD_DEFAULT_MODEL` model alias, discovers fresh task-scoped
+  context for each task, exposes only currently granted plugin tool schemas, and
+  invokes authorized loaded plugin tool calls.
 - Loads plugin modules with importlib from `SKQUAD_PLUGIN_MODULES`, optionally
   filters them with `SKQUAD_ENABLED_PLUGINS`, and blocks tasks predictably for
   unknown tool calls or plugin invocation failures.
@@ -45,11 +45,13 @@ agent-runtime/
   enabled, required control-plane/gateway config plus both mounted Secret values
   must be present.
 - Fetches task-scoped context for the assigned task before LLM execution,
-  including granted active resources and recent scoped memory rows.
+  including granted active resources and recent scoped memory rows. Context is
+  not cached across tasks, so permission and memory changes take effect without
+  a pod restart.
 - Sends non-empty completion summaries back to the control plane for bounded
   per-agent memory persistence.
 - Provides the `skquad-agent-runtime` console script.
 
 Automatic registry package installation, semantic memory search, persistent
-message failure counts/dead-lettering, and artifact persistence are still
-upcoming slices.
+message failure counts/dead-lettering, transactional task results, and artifact
+persistence are still upcoming slices.

@@ -21,6 +21,7 @@ import (
 
 const (
 	managedBy                 = "skquad-operator"
+	squadFinalizer            = "skquad.io/squad-cleanup"
 	agentServiceAccountName   = "skquad-agent"
 	defaultDenyPolicyName     = "default-deny"
 	dnsEgressPolicyName       = "allow-dns-egress"
@@ -45,6 +46,26 @@ func (r *SquadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	var squad skquadv1.Squad
 	if err := r.Get(ctx, req.NamespacedName, &squad); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if squad.ObjectMeta.DeletionTimestamp.IsZero() {
+		if controllerutil.AddFinalizer(&squad, squadFinalizer) {
+			if err := r.Update(ctx, &squad); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+	} else {
+		if controllerutil.ContainsFinalizer(&squad, squadFinalizer) {
+			if err := r.cleanupSquad(ctx, &squad); err != nil {
+				return ctrl.Result{}, err
+			}
+			controllerutil.RemoveFinalizer(&squad, squadFinalizer)
+			if err := r.Update(ctx, &squad); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
 	}
 
 	namespaceName := SquadNamespace(&squad)
@@ -89,6 +110,22 @@ func (r *SquadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *SquadReconciler) cleanupSquad(ctx context.Context, squad *skquadv1.Squad) error {
+	namespaceName := SquadNamespace(squad)
+	for _, obj := range []client.Object{
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: defaultDenyPolicyName, Namespace: namespaceName}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: dnsEgressPolicyName, Namespace: namespaceName}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: platformEgressPolicyName, Namespace: namespaceName}},
+		&corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: defaultSquadQuotaName, Namespace: namespaceName}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: agentServiceAccountName, Namespace: namespaceName}},
+	} {
+		if err := deleteIfExists(ctx, r.Client, obj); err != nil {
+			return err
+		}
+	}
+	return deleteIfExists(ctx, r.Client, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespaceName}})
 }
 
 func (r *SquadReconciler) ensureAgentServiceAccount(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
@@ -206,6 +243,13 @@ func networkPolicyPort(protocol corev1.Protocol, port int) networkingv1.NetworkP
 		Protocol: &protocol,
 		Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: int32(port)},
 	}
+}
+
+func deleteIfExists(ctx context.Context, c client.Client, obj client.Object) error {
+	if err := c.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // SetupWithManager registers the Squad controller with a controller-runtime

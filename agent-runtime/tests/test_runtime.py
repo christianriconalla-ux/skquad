@@ -543,6 +543,77 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertIn("Relevant memory:", system_message)
             self.assertIn("source_task=task-0 | Previous result", system_message)
 
+    def test_litellm_handler_refreshes_task_context_for_each_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
+                }
+            )
+            calls = []
+            context_client = SequencedContextClient()
+
+            def completion(**kwargs):
+                calls.append(kwargs)
+                return fake_completion("Ready for review.")
+
+            handler = LiteLLMTaskHandler(completion=completion)
+
+            original = ControlPlaneClient.from_bootstrap
+            ControlPlaneClient.from_bootstrap = classmethod(lambda cls, _config: context_client)
+            try:
+                handler.handle_task(fake_task("task-1"), config)
+                handler.handle_task(fake_task("task-2"), config)
+            finally:
+                ControlPlaneClient.from_bootstrap = original
+
+            self.assertEqual(context_client.task_context_calls, ["task-1", "task-2"])
+            self.assertIn("Memory for task-1", calls[0]["messages"][0]["content"])
+            self.assertIn("Memory for task-2", calls[1]["messages"][0]["content"])
+
+    def test_litellm_handler_filters_loaded_plugins_by_current_grants(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
+                }
+            )
+            plugin = EchoPlugin()
+            calls = []
+
+            def completion(**kwargs):
+                calls.append(kwargs)
+                return fake_tool_completion("call-1", "echo", {"message": "hello"})
+
+            handler = LiteLLMTaskHandler(plugins=[plugin], completion=completion)
+
+            original = ControlPlaneClient.from_bootstrap
+            ControlPlaneClient.from_bootstrap = classmethod(lambda cls, _config: FakeContextClient())
+            try:
+                result = handler.handle_task(fake_task("task-1"), config)
+            finally:
+                ControlPlaneClient.from_bootstrap = original
+
+            self.assertEqual(result.status, "blocked")
+            self.assertNotIn("tools", calls[0])
+            self.assertEqual(plugin.calls, [])
+
     def test_litellm_handler_invokes_plugin_tool_calls(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = ready_config(tmp)
@@ -793,6 +864,38 @@ class FakeContextClient:
                     content="Previous result",
                     source_task_id="task-0",
                     metadata={"kind": "task_completion"},
+                )
+            ],
+            limits={"memory_limit": 10},
+        )
+
+
+class SequencedContextClient:
+    def __init__(self):
+        self.task_context_calls = []
+
+    def task_context(self, task_id):
+        self.task_context_calls.append(task_id)
+        return RuntimeTaskContext(
+            task=fake_task(task_id),
+            resources=[
+                RuntimeResource(
+                    resource_type="tool",
+                    resource_id="tool-1",
+                    name="echo",
+                    description="Echo messages",
+                    endpoint="plugin://echo",
+                    manifest={},
+                )
+            ],
+            memory=[
+                RuntimeMemory(
+                    id=f"mem-{task_id}",
+                    agent_id="agent-1",
+                    squad_id="squad-1",
+                    content=f"Memory for {task_id}",
+                    source_task_id="previous",
+                    metadata={"kind": "task_context"},
                 )
             ],
             limits={"memory_limit": 10},

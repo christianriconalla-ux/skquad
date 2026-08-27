@@ -17,7 +17,10 @@ The current chart installs:
 
 - CRDs for `Squad` and `Agent`
 - Operator namespace, ServiceAccount, ClusterRole, ClusterRoleBinding, and
-  Deployment
+  Deployment. The ClusterRole includes CR finalizer update permissions and
+  delete permissions for managed Namespaces, Deployments, ServiceAccounts,
+  ResourceQuotas, and NetworkPolicies so operator finalizers can clean up
+  cross-namespace resources.
 - API server ServiceAccount, namespaced CR-writer RBAC, cluster-scoped
   agent-credential Secret writer RBAC, Deployment, and Service
 - LLM gateway ConfigMap, Deployment, and Service

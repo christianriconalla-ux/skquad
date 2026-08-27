@@ -120,6 +120,11 @@ operator-provided config:
   names. Any enabled name that is not loaded fails startup clearly.
 - Loaded plugins must expose a non-empty `name`, callable `tools()`, and
   callable `invoke(call, config)`.
+- Loading is not sufficient authorization. For normal control-plane discovery,
+  the runtime resolves granted resources for each task and exposes only loaded
+  plugins whose name matches a granted `skill`/`tool` resource name, a
+  `plugin://<name>` endpoint, or an explicit `plugin`, `plugin_name`, `tool`, or
+  `tool_name` manifest field.
 - Unknown tool calls or plugin invocation failures produce a blocked task
   result instead of crashing the worker loop.
 
