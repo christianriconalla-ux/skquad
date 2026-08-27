@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "skquad.llmGatewayName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "skquad.labels" . | nindent 4 }}
+    app.kubernetes.io/component: llm-gateway
+spec:
+  replicas: {{ .Values.replicas.llmGateway }}
+  selector:
+    matchLabels:
+      {{- include "skquad.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: llm-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "skquad.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: llm-gateway
+    spec:
+      containers:
+        - name: llm-gateway
+          image: {{ include "skquad.llmGatewayImage" . | quote }}
+          imagePullPolicy: {{ .Values.llmGateway.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.llmGateway.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/skquad/llm-gateway
+              readOnly: true
+          resources:
+            {{- toYaml .Values.llmGateway.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "skquad.llmGatewayName" . }}

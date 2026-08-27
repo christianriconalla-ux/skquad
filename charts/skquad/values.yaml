@@ -29,6 +29,13 @@ namespace:
 postgres:
   enabled: true
   image: pgvector/pgvector:pg16
+  imagePullPolicy: IfNotPresent
+  database: skquad
+  user: skquad
+  password: skquad-dev-password
+  storage:
+    size: 10Gi
+  resources: {}
 
 observability:
   enabled: false   # toggle Prometheus metrics (see docs/observability-metering.md)
@@ -52,3 +59,36 @@ operator:
       drop:
         - ALL
     readOnlyRootFilesystem: true
+
+apiServer:
+  imagePullPolicy: IfNotPresent
+  authMode: dev
+  databaseUrl: ""
+  oidc:
+    issuer: ""
+    audience: ""
+  resources: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+llmGateway:
+  imagePullPolicy: IfNotPresent
+  port: 4000
+  config: |
+    model_list: []
+    litellm_settings:
+      success_callback: []
+  resources: {}
+
+web:
+  imagePullPolicy: IfNotPresent
+  port: 3000
+  resources: {}

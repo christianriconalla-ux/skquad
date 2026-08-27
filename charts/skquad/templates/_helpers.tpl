@@ -35,3 +35,31 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "skquad.operatorImage" -}}
 {{- printf "%s:%s" .Values.image.operator.repository .Values.image.operator.tag -}}
 {{- end -}}
+
+{{- define "skquad.apiServerName" -}}
+{{- printf "%s-api-server" (include "skquad.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "skquad.apiServerImage" -}}
+{{- printf "%s:%s" .Values.image.apiServer.repository .Values.image.apiServer.tag -}}
+{{- end -}}
+
+{{- define "skquad.llmGatewayName" -}}
+{{- printf "%s-llm-gateway" (include "skquad.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "skquad.llmGatewayImage" -}}
+{{- printf "%s:%s" .Values.image.llmGateway.repository .Values.image.llmGateway.tag -}}
+{{- end -}}
+
+{{- define "skquad.webName" -}}
+{{- printf "%s-web" (include "skquad.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "skquad.webImage" -}}
+{{- printf "%s:%s" .Values.image.web.repository .Values.image.web.tag -}}
+{{- end -}}
+
+{{- define "skquad.postgresName" -}}
+{{- printf "%s-postgres" (include "skquad.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}

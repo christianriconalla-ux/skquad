@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "skquad.apiServerName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "skquad.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-server
+spec:
+  replicas: {{ .Values.replicas.apiServer }}
+  selector:
+    matchLabels:
+      {{- include "skquad.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-server
+  template:
+    metadata:
+      labels:
+        {{- include "skquad.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api-server
+    spec:
+      serviceAccountName: {{ include "skquad.apiServerName" . }}
+      securityContext:
+        {{- toYaml .Values.apiServer.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api-server
+          image: {{ include "skquad.apiServerImage" . | quote }}
+          imagePullPolicy: {{ .Values.apiServer.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SKQUAD_ADDR
+              value: ":8080"
+            - name: SKQUAD_AUTH_MODE
+              value: {{ .Values.apiServer.authMode | quote }}
+            - name: SKQUAD_K8S_ENABLED
+              value: "true"
+            - name: SKQUAD_K8S_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: SKQUAD_AGENT_IMAGE
+              value: {{ printf "%s:%s" .Values.image.agentRuntime.repository .Values.image.agentRuntime.tag | quote }}
+            - name: SKQUAD_DEFAULT_IDLE_TIMEOUT
+              value: {{ .Values.agent.idleTimeout | quote }}
+            {{- if .Values.apiServer.databaseUrl }}
+            - name: SKQUAD_DATABASE_URL
+              value: {{ .Values.apiServer.databaseUrl | quote }}
+            {{- else if .Values.postgres.enabled }}
+            - name: SKQUAD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skquad.postgresName" . }}
+                  key: database-url
+            {{- end }}
+            {{- if eq .Values.apiServer.authMode "oidc" }}
+            - name: SKQUAD_OIDC_ISSUER
+              value: {{ .Values.apiServer.oidc.issuer | quote }}
+            - name: SKQUAD_OIDC_AUDIENCE
+              value: {{ .Values.apiServer.oidc.audience | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.apiServer.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.apiServer.securityContext | nindent 12 }}

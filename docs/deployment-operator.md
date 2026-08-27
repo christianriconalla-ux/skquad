@@ -168,23 +168,22 @@ charts/skquad/
 │   └── skquad.io_agents.yaml
 └── templates/
     ├── namespace.yaml              # skquad-system
+    ├── api-server-deployment.yaml
+    ├── api-server-rbac.yaml
+    ├── api-server-service.yaml
+    ├── api-server-serviceaccount.yaml
+    ├── llm-gateway-configmap.yaml
+    ├── llm-gateway-deployment.yaml
+    ├── llm-gateway-service.yaml
     ├── operator-deployment.yaml
     ├── operator-rbac.yaml           # ClusterRole/Binding (needs cross-ns)
     ├── operator-serviceaccount.yaml
-    ├── api-server/
-    │   ├── deployment.yaml
-    │   ├── service.yaml
-    │   └── ingress.yaml
-    ├── web-app/
-    │   ├── deployment.yaml
-    │   └── service.yaml
-    ├── llm-gateway/
-    │   ├── deployment.yaml
-    │   └── service.yaml
-    ├── postgres/
-    │   ├── statefulset.yaml         # or use a managed DB
-    │   ├── service.yaml
-    │   └── secret.yaml
+    ├── postgres-secret.yaml
+    ├── postgres-service.yaml
+    ├── postgres-statefulset.yaml
+    ├── web-deployment.yaml
+    ├── web-service.yaml
+    ├── ingress.yaml                 # upcoming
     └── prometheus/                   # optional (observability feature)
         └── ...
 ```
