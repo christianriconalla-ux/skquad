@@ -51,6 +51,9 @@ agent:
   taskPollIntervalSeconds: "5"
   inboxPollIntervalSeconds: "5"
   inboxBatchSize: "5"
+  taskTimeoutSeconds: "900"
+  maxLLMSteps: "8"
+  taskSummaryMaxChars: "4000"
 
 operator:
   leaderElection: true

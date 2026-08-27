@@ -321,3 +321,10 @@
 - files changed: `charts/skquad/templates/postgres-statefulset.yaml`, `WORKLOG.md`.
 - command/test run: `helm lint charts/skquad`; `helm template skquad charts/skquad --namespace skquad-system`; Kubernetes server-side dry-run against the lab API.
 - result: The Postgres StatefulSet template now renders Kubernetes default pod fields, termination message fields, PVC template `apiVersion`/`kind`, and `volumeMode` so ArgoCD server-side apply comparison is stable.
+
+## 2026-08-28 00:07:30 ACST
+
+- objective: Add runtime execution observability and configurable execution limits.
+- files changed: `agent-runtime/skquad_runtime/runtime.py`, `agent-runtime/skquad_runtime/__init__.py`, `agent-runtime/tests/test_runtime.py`, `agent-runtime/README.md`, `operator/internal/controller/agent_controller.go`, `operator/internal/controller/agent_controller_test.go`, `charts/skquad/values.yaml`, `charts/skquad/templates/operator-deployment.yaml`, `charts/skquad/README.md`, `operator/README.md`, `docs/agent-runtime.md`, `docs/observability-metering.md`, `docs/deployment-operator.md`, `WORKLOG.md`.
+- command/test run: `go vet ./... && go test ./...` in `control-plane/`; `go vet ./... && go test ./...` in `operator/`; `python3 -m unittest discover -s tests` and `python3 -m py_compile skquad_runtime/*.py tests/*.py` in `agent-runtime/`; `helm lint charts/skquad`; default Helm render; Kubernetes server-side dry-run against the lab API; `npm ci && NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`.
+- result: Added in-process runtime counters, `/status`, dependency-free Prometheus text at `/metrics`, bounded handler execution via `SKQUAD_TASK_TIMEOUT_SECONDS`, LiteLLM step cap via `SKQUAD_MAX_LLM_STEPS`, completion summary cap via `SKQUAD_TASK_SUMMARY_MAX_CHARS`, structured runtime logs, chart/operator env propagation, and docs describing the execution limits and metrics surface.

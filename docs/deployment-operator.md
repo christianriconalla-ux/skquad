@@ -143,7 +143,8 @@ When the operator sees an `Agent` CR:
      the Agent CR includes Kubernetes Secret names.
    - **Env:** agent config (role, registry provider ID, default model alias,
      endpoints, `SKQUAD_TASK_LOOP_ENABLED=true`, task poll interval, inbox poll
-     interval, and inbox batch size).
+     interval, inbox batch size, task timeout, LLM step cap, and completion
+     summary cap).
    - **Probes:** `/healthz`, `/readyz`.
    - **Resources:** requests/limits (configurable).
 2. **React to the control plane's desired activity signal.**

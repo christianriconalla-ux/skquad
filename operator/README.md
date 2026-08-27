@@ -33,7 +33,7 @@ operator/
   uses the squad agent ServiceAccount, mounts agent credential/virtual-key
   Secrets when the Agent CR names them, passes runtime bootstrap env vars including
   provider ID, default model alias, control-plane/gateway URLs, and task/inbox
-  polling settings, enables the runtime task loop, configures
+  polling settings plus runtime execution limits, enables the runtime task loop, configures
   `/healthz` and `/readyz` probes, writes basic ready status, and uses a
   `skquad.io/agent-cleanup` finalizer to delete the cross-namespace Deployment
   before the Agent CR is released

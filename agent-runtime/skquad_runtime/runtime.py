@@ -8,9 +8,10 @@ import inspect
 import importlib
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
-from time import sleep as default_sleep
+from time import monotonic, sleep as default_sleep
 from typing import Callable, Mapping, Protocol
 from urllib import error, request
 
@@ -38,6 +39,9 @@ class BootstrapConfig:
     task_poll_interval_seconds: float
     inbox_poll_interval_seconds: float
     inbox_batch_size: int
+    task_timeout_seconds: float
+    max_llm_steps: int
+    task_summary_max_chars: int
     plugin_modules: tuple[str, ...]
     enabled_plugins: tuple[str, ...]
 
@@ -140,6 +144,86 @@ class InboxRunResult:
 
 
 @dataclass(frozen=True)
+class RuntimeSnapshot:
+    tasks_claimed: int = 0
+    tasks_completed: int = 0
+    tasks_blocked: int = 0
+    task_errors: int = 0
+    task_timeouts: int = 0
+    inbox_fetched: int = 0
+    inbox_processed: int = 0
+    inbox_failed: int = 0
+    loop_errors: int = 0
+    total_task_seconds: float = 0.0
+    active_task_id: str = ""
+    last_task_id: str = ""
+    last_task_status: str = ""
+    last_error: str = ""
+
+
+class RuntimeState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._snapshot = RuntimeSnapshot()
+
+    def snapshot(self) -> RuntimeSnapshot:
+        with self._lock:
+            return self._snapshot
+
+    def task_claimed(self, task: RuntimeTask) -> None:
+        self._replace(
+            tasks_claimed=self._snapshot.tasks_claimed + 1,
+            active_task_id=task.id,
+            last_task_id=task.id,
+            last_task_status="claimed",
+            last_error="",
+        )
+
+    def task_finished(self, task_id: str, status: str, duration_seconds: float) -> None:
+        snapshot = self.snapshot()
+        completed = snapshot.tasks_completed + (1 if status in ("done", "in-review") else 0)
+        blocked = snapshot.tasks_blocked + (1 if status == "blocked" else 0)
+        self._replace(
+            tasks_completed=completed,
+            tasks_blocked=blocked,
+            total_task_seconds=snapshot.total_task_seconds + max(0.0, duration_seconds),
+            active_task_id="",
+            last_task_id=task_id,
+            last_task_status=status,
+            last_error="",
+        )
+
+    def task_failed(self, task_id: str, error_message: str, timed_out: bool = False) -> None:
+        snapshot = self.snapshot()
+        self._replace(
+            tasks_blocked=snapshot.tasks_blocked + 1,
+            task_errors=snapshot.task_errors + 1,
+            task_timeouts=snapshot.task_timeouts + (1 if timed_out else 0),
+            active_task_id="",
+            last_task_id=task_id,
+            last_task_status="blocked",
+            last_error=error_message,
+        )
+
+    def inbox_finished(self, result: InboxRunResult) -> None:
+        snapshot = self.snapshot()
+        self._replace(
+            inbox_fetched=snapshot.inbox_fetched + result.fetched,
+            inbox_processed=snapshot.inbox_processed + result.processed,
+            inbox_failed=snapshot.inbox_failed + result.failed,
+        )
+
+    def loop_failed(self, error_message: str) -> None:
+        snapshot = self.snapshot()
+        self._replace(loop_errors=snapshot.loop_errors + 1, last_error=error_message)
+
+    def _replace(self, **changes: object) -> None:
+        with self._lock:
+            values = self._snapshot.__dict__ | changes
+            self._snapshot = RuntimeSnapshot(**values)
+
+
+@dataclass(frozen=True)
 class ToolCall:
     id: str
     name: str
@@ -195,6 +279,9 @@ def load_bootstrap_config(environ: Mapping[str, str] | None = None) -> Bootstrap
         task_poll_interval_seconds=env_float(env, "SKQUAD_TASK_POLL_INTERVAL_SECONDS", 5.0),
         inbox_poll_interval_seconds=env_float(env, "SKQUAD_INBOX_POLL_INTERVAL_SECONDS", 5.0),
         inbox_batch_size=env_int(env, "SKQUAD_INBOX_BATCH_SIZE", 5),
+        task_timeout_seconds=env_float(env, "SKQUAD_TASK_TIMEOUT_SECONDS", 900.0),
+        max_llm_steps=env_int(env, "SKQUAD_MAX_LLM_STEPS", 8),
+        task_summary_max_chars=env_int(env, "SKQUAD_TASK_SUMMARY_MAX_CHARS", 4000),
         plugin_modules=parse_csv(env.get("SKQUAD_PLUGIN_MODULES", "")),
         enabled_plugins=parse_csv(env.get("SKQUAD_ENABLED_PLUGINS", "")),
     )
@@ -428,7 +515,7 @@ class LiteLLMTaskHandler:
         resources: list[RuntimeResource] | None = None,
         completion: Callable[..., object] | None = None,
         model: str | None = None,
-        max_steps: int = 8,
+        max_steps: int | None = None,
         discover_resources: bool = True,
     ) -> None:
         self.plugins = plugins or []
@@ -466,7 +553,8 @@ class LiteLLMTaskHandler:
         completion = self.completion()
         last_content = ""
 
-        for _ in range(self.max_steps):
+        max_steps = max(1, self.max_steps or config.max_llm_steps)
+        for _ in range(max_steps):
             completion_kwargs: dict[str, object] = {
                 "model": model,
                 "messages": messages,
@@ -482,7 +570,10 @@ class LiteLLMTaskHandler:
             tool_calls = parse_tool_calls(message)
             messages.append(assistant_message(content, tool_calls))
             if not tool_calls:
-                return TaskResult(status=status_from_content(content), summary=content)
+                return TaskResult(
+                    status=status_from_content(content),
+                    summary=trim_text(content, config.task_summary_max_chars),
+                )
             for call in tool_calls:
                 result = self.invoke_tool(call, config, plugins)
                 if not result.ok:
@@ -496,7 +587,10 @@ class LiteLLMTaskHandler:
                     }
                 )
 
-        return TaskResult(status="in-review", summary=last_content)
+        return TaskResult(
+            status="in-review",
+            summary=trim_text(last_content, config.task_summary_max_chars),
+        )
 
     def completion(self) -> Callable[..., object]:
         if self._completion is not None:
@@ -780,6 +874,7 @@ def run_task_once(
     config: BootstrapConfig,
     handler: TaskHandler,
     client: ControlPlaneClient | None = None,
+    state: RuntimeState | None = None,
 ) -> RuntimeTask | None:
     status = bootstrap_status(config)
     if not status.ready:
@@ -789,28 +884,78 @@ def run_task_once(
     if task is None:
         control_plane.heartbeat("idle")
         return None
+    if state is not None:
+        state.task_claimed(task)
+    LOGGER.info("agent task claimed", extra={"task_id": task.id, "squad_id": task.squad_id})
     control_plane.heartbeat("busy")
+    started = monotonic()
     try:
-        result = handler.handle_task(task, config)
-    except Exception:
+        result = handle_task_with_timeout(handler, task, config)
+    except TimeoutError as exc:
+        LOGGER.warning(
+            "agent task timed out",
+            extra={"task_id": task.id, "timeout_seconds": config.task_timeout_seconds},
+        )
         final_task = control_plane.block_task(task.id)
         control_plane.heartbeat("idle")
+        if state is not None:
+            state.task_failed(task.id, str(exc), timed_out=True)
+        return final_task
+    except Exception as exc:
+        LOGGER.exception("agent task handling failed", extra={"task_id": task.id})
+        final_task = control_plane.block_task(task.id)
+        control_plane.heartbeat("idle")
+        if state is not None:
+            state.task_failed(task.id, str(exc))
         return final_task
     if result.status not in ("in-review", "done", "blocked"):
+        LOGGER.warning(
+            "agent task handler returned invalid status",
+            extra={"task_id": task.id, "status": result.status},
+        )
         final_task = control_plane.block_task(task.id)
         control_plane.heartbeat("idle")
+        if state is not None:
+            state.task_failed(task.id, f"invalid task status {result.status!r}")
         return final_task
+    summary = trim_text(result.summary, config.task_summary_max_chars)
     if result.status == "blocked":
         final_task = control_plane.block_task(task.id)
     else:
         final_task = control_plane.complete_task(
             task.id,
             result.status,
-            summary=result.summary,
-            persist_memory=bool(result.summary.strip()),
+            summary=summary,
+            persist_memory=bool(summary.strip()),
         )
     control_plane.heartbeat("idle")
+    duration = monotonic() - started
+    LOGGER.info(
+        "agent task finished",
+        extra={"task_id": task.id, "status": result.status, "duration_seconds": round(duration, 3)},
+    )
+    if state is not None:
+        state.task_finished(task.id, result.status, duration)
     return final_task
+
+
+def handle_task_with_timeout(
+    handler: TaskHandler,
+    task: RuntimeTask,
+    config: BootstrapConfig,
+) -> TaskResult:
+    timeout = config.task_timeout_seconds
+    if timeout <= 0:
+        return handler.handle_task(task, config)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="skquad-task")
+    future = executor.submit(handler.handle_task, task, config)
+    try:
+        return future.result(timeout=timeout)
+    except FutureTimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"task exceeded timeout of {timeout:g}s") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def run_inbox_once(
@@ -818,6 +963,7 @@ def run_inbox_once(
     handler: MessageHandler,
     client: ControlPlaneClient | None = None,
     max_messages: int | None = None,
+    state: RuntimeState | None = None,
 ) -> InboxRunResult:
     status = bootstrap_status(config)
     if not status.ready:
@@ -853,7 +999,14 @@ def run_inbox_once(
             )
             failed += 1
     control_plane.heartbeat("idle")
-    return InboxRunResult(fetched=fetched, processed=processed, failed=failed)
+    result = InboxRunResult(fetched=fetched, processed=processed, failed=failed)
+    LOGGER.info(
+        "agent inbox run finished",
+        extra={"fetched": fetched, "processed": processed, "failed": failed},
+    )
+    if state is not None:
+        state.inbox_finished(result)
+    return result
 
 
 def run_task_loop(
@@ -864,6 +1017,7 @@ def run_task_loop(
     poll_interval_seconds: float | None = None,
     stop_event: object | None = None,
     sleeper: Callable[[float], None] = default_sleep,
+    state: RuntimeState | None = None,
 ) -> None:
     interval = poll_interval_seconds
     if interval is None:
@@ -871,10 +1025,12 @@ def run_task_loop(
     while not stop_requested(stop_event):
         try:
             if message_handler is not None:
-                run_inbox_once(config, message_handler, client)
-            run_task_once(config, handler, client)
-        except Exception:
+                run_inbox_once(config, message_handler, client, state=state)
+            run_task_once(config, handler, client, state=state)
+        except Exception as exc:
             LOGGER.exception("agent runtime loop iteration failed")
+            if state is not None:
+                state.loop_failed(str(exc))
         sleeper(interval)
 
 
@@ -913,9 +1069,15 @@ def parse_csv(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
-def create_app(config: BootstrapConfig | None = None):
+def trim_text(value: str, limit: int) -> str:
+    if limit <= 0 or len(value) <= limit:
+        return value
+    return value[:limit].rstrip() + "\n[truncated]"
+
+
+def create_app(config: BootstrapConfig | None = None, state: RuntimeState | None = None):
     from fastapi import FastAPI, status
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import JSONResponse, PlainTextResponse
 
     app = FastAPI(title="skquad agent runtime", version="0.1.0")
 
@@ -937,23 +1099,98 @@ def create_app(config: BootstrapConfig | None = None):
             "task_loop_enabled": status_result.task_loop_enabled,
         }, status_code=status_code)
 
+    @app.get("/status")
+    def runtime_status() -> dict[str, object]:
+        status_result = bootstrap_status(config or load_bootstrap_config())
+        return {
+            "ready": status_result.ready,
+            "agent_id": status_result.agent_id,
+            "squad_id": status_result.squad_id,
+            "runtime": snapshot_dict(state.snapshot() if state is not None else RuntimeSnapshot()),
+        }
+
+    @app.get("/metrics")
+    def metrics() -> PlainTextResponse:
+        status_result = bootstrap_status(config or load_bootstrap_config())
+        snapshot = state.snapshot() if state is not None else RuntimeSnapshot()
+        return PlainTextResponse(runtime_metrics_text(status_result, snapshot), media_type="text/plain")
+
     return app
+
+
+def snapshot_dict(snapshot: RuntimeSnapshot) -> dict[str, object]:
+    return {
+        "tasks_claimed": snapshot.tasks_claimed,
+        "tasks_completed": snapshot.tasks_completed,
+        "tasks_blocked": snapshot.tasks_blocked,
+        "task_errors": snapshot.task_errors,
+        "task_timeouts": snapshot.task_timeouts,
+        "inbox_fetched": snapshot.inbox_fetched,
+        "inbox_processed": snapshot.inbox_processed,
+        "inbox_failed": snapshot.inbox_failed,
+        "loop_errors": snapshot.loop_errors,
+        "total_task_seconds": snapshot.total_task_seconds,
+        "active_task_id": snapshot.active_task_id,
+        "last_task_id": snapshot.last_task_id,
+        "last_task_status": snapshot.last_task_status,
+        "last_error": snapshot.last_error,
+    }
+
+
+def runtime_metrics_text(status_result: BootstrapStatus, snapshot: RuntimeSnapshot) -> str:
+    labels = f'agent="{status_result.agent_id}",squad="{status_result.squad_id}"'
+    lines = [
+        "# HELP skquad_agent_ready Agent runtime readiness state.",
+        "# TYPE skquad_agent_ready gauge",
+        f"skquad_agent_ready{{{labels}}} {1 if status_result.ready else 0}",
+        "# HELP skquad_agent_tasks_claimed_total Tasks claimed by the runtime.",
+        "# TYPE skquad_agent_tasks_claimed_total counter",
+        f"skquad_agent_tasks_claimed_total{{{labels}}} {snapshot.tasks_claimed}",
+        "# HELP skquad_agent_tasks_completed_total Tasks completed by the runtime.",
+        "# TYPE skquad_agent_tasks_completed_total counter",
+        f"skquad_agent_tasks_completed_total{{{labels}}} {snapshot.tasks_completed}",
+        "# HELP skquad_agent_tasks_blocked_total Tasks blocked by the runtime.",
+        "# TYPE skquad_agent_tasks_blocked_total counter",
+        f"skquad_agent_tasks_blocked_total{{{labels}}} {snapshot.tasks_blocked}",
+        "# HELP skquad_agent_task_errors_total Task execution errors seen by the runtime.",
+        "# TYPE skquad_agent_task_errors_total counter",
+        f"skquad_agent_task_errors_total{{{labels}}} {snapshot.task_errors}",
+        "# HELP skquad_agent_task_timeouts_total Task execution timeouts seen by the runtime.",
+        "# TYPE skquad_agent_task_timeouts_total counter",
+        f"skquad_agent_task_timeouts_total{{{labels}}} {snapshot.task_timeouts}",
+        "# HELP skquad_agent_task_duration_seconds_total Total task execution duration observed by the runtime.",
+        "# TYPE skquad_agent_task_duration_seconds_total counter",
+        f"skquad_agent_task_duration_seconds_total{{{labels}}} {snapshot.total_task_seconds:.6f}",
+        "# HELP skquad_agent_inbox_messages_total Inbox messages observed by the runtime.",
+        "# TYPE skquad_agent_inbox_messages_total counter",
+        f'skquad_agent_inbox_messages_total{{{labels},result="fetched"}} {snapshot.inbox_fetched}',
+        f'skquad_agent_inbox_messages_total{{{labels},result="processed"}} {snapshot.inbox_processed}',
+        f'skquad_agent_inbox_messages_total{{{labels},result="failed"}} {snapshot.inbox_failed}',
+        "# HELP skquad_agent_loop_errors_total Runtime loop iteration errors.",
+        "# TYPE skquad_agent_loop_errors_total counter",
+        f"skquad_agent_loop_errors_total{{{labels}}} {snapshot.loop_errors}",
+        "# HELP skquad_agent_active_task Runtime active task state.",
+        "# TYPE skquad_agent_active_task gauge",
+        f"skquad_agent_active_task{{{labels}}} {1 if snapshot.active_task_id else 0}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def main() -> None:
     import uvicorn
 
     config = load_bootstrap_config()
+    state = RuntimeState()
     if config.task_loop_enabled:
         plugins = load_runtime_plugins(config)
         worker = threading.Thread(
             target=run_task_loop,
-            args=(config, LiteLLMTaskHandler(plugins=plugins)),
-            kwargs={"message_handler": DefaultMessageHandler()},
+            args=(config, LiteLLMTaskHandler(plugins=plugins, max_steps=config.max_llm_steps)),
+            kwargs={"message_handler": DefaultMessageHandler(), "state": state},
             daemon=True,
         )
         worker.start()
 
     host = os.environ.get("SKQUAD_RUNTIME_HOST", "0.0.0.0")
     port = int(os.environ.get("SKQUAD_RUNTIME_PORT", "8080"))
-    uvicorn.run(create_app(config), host=host, port=port)
+    uvicorn.run(create_app(config, state), host=host, port=port)

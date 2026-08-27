@@ -42,8 +42,19 @@ skquad_operator_reconcile_total{kind, result}
 skquad_operator_scale_up_duration_seconds{agent}
 skquad_agent_tasks_total{agent, squad, status}
 skquad_agent_task_duration_seconds{agent, squad}
+skquad_agent_task_errors_total{agent, squad}
+skquad_agent_task_timeouts_total{agent, squad}
+skquad_agent_inbox_messages_total{agent, squad, result}
 skquad_agent_state{agent, squad}  # 0=idle, 1=busy
 ```
+
+The current runtime exposes dependency-free Prometheus text at `/metrics` and a
+JSON snapshot at `/status`. The implemented counters cover readiness,
+task-claim/completion/block totals, execution errors, execution timeouts,
+cumulative task duration, inbox fetched/processed/failed totals, loop errors,
+and whether a task is active. Labels are limited to agent and squad IDs; task
+payloads, message payloads, summaries, and credentials are intentionally not
+exported.
 
 ### 1.3 Dashboards & alerts
 

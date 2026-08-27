@@ -23,13 +23,18 @@ agent-runtime/
 - Loads bootstrap config from the operator-provided `SKQUAD_*` environment.
 - Reads mounted Kubernetes Secret directories for the agent credential and LLM
   gateway virtual key without returning raw secret values.
-- Exposes `/healthz` and `/readyz` through FastAPI.
+- Exposes `/healthz`, `/readyz`, `/status`, and dependency-free Prometheus text
+  at `/metrics` through FastAPI. Runtime status/metrics include counters and
+  state only; task payloads, summaries, message payloads, and credentials are
+  not emitted.
 - Provides a small control-plane client for agent-authenticated task listing,
   resource discovery, inbox listing/acknowledgement, task-context loading,
   claiming, completion/blocking, and idle/busy/error heartbeats.
 - Provides `poll_once`, `run_inbox_once`, and `run_task_once` primitives. The
   runtime loop drains a bounded inbox batch and then processes at most one task
   per iteration so messages and tasks do not starve each other.
+- Enforces configurable task execution limits: `SKQUAD_TASK_TIMEOUT_SECONDS`,
+  `SKQUAD_MAX_LLM_STEPS`, and `SKQUAD_TASK_SUMMARY_MAX_CHARS`.
 - Provides a default `LiteLLMTaskHandler` that reads the mounted LLM gateway
   virtual key, calls the OpenAI-compatible gateway through LiteLLM using the
   explicit `SKQUAD_DEFAULT_MODEL` model alias, discovers fresh task-scoped

@@ -77,8 +77,10 @@ LiteLLM can create baseline migration state if the target schema is not empty.
 
 Runtime polling defaults are configured through `agent.idleTimeout`,
 `agent.taskPollIntervalSeconds`, `agent.inboxPollIntervalSeconds`, and
-`agent.inboxBatchSize`. The chart passes those values to the operator, and the
-operator injects the corresponding `SKQUAD_*` env vars into generated agent
+`agent.inboxBatchSize`. Runtime execution limits are configured through
+`agent.taskTimeoutSeconds`, `agent.maxLLMSteps`, and
+`agent.taskSummaryMaxChars`. The chart passes those values to the operator, and
+the operator injects the corresponding `SKQUAD_*` env vars into generated agent
 pods.
 
 Public DNS/TLS values and external database hardening are still upcoming slices.

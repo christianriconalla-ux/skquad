@@ -1,6 +1,7 @@
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from skquad_runtime.runtime import (
     RuntimeMemory,
     RuntimeMessage,
     RuntimeResource,
+    RuntimeState,
     RuntimeTask,
     RuntimeTaskContext,
     TaskResult,
@@ -25,6 +27,7 @@ from skquad_runtime.runtime import (
     run_task_loop,
     read_secret_value,
     run_task_once,
+    runtime_metrics_text,
 )
 
 
@@ -46,6 +49,9 @@ class RuntimeBootstrapTest(unittest.TestCase):
                 "SKQUAD_TASK_POLL_INTERVAL_SECONDS": "7.5",
                 "SKQUAD_INBOX_POLL_INTERVAL_SECONDS": "2.5",
                 "SKQUAD_INBOX_BATCH_SIZE": "3",
+                "SKQUAD_TASK_TIMEOUT_SECONDS": "12.5",
+                "SKQUAD_MAX_LLM_STEPS": "4",
+                "SKQUAD_TASK_SUMMARY_MAX_CHARS": "80",
             }
         )
 
@@ -59,6 +65,9 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(config.task_poll_interval_seconds, 7.5)
         self.assertEqual(config.inbox_poll_interval_seconds, 2.5)
         self.assertEqual(config.inbox_batch_size, 3)
+        self.assertEqual(config.task_timeout_seconds, 12.5)
+        self.assertEqual(config.max_llm_steps, 4)
+        self.assertEqual(config.task_summary_max_chars, 80)
         self.assertEqual(config.agent_credential_path, Path("/tmp/credentials/agent"))
         self.assertEqual(config.virtual_key_path, Path("/tmp/credentials/gateway"))
         self.assertTrue(config.task_loop_enabled)
@@ -92,6 +101,27 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     "SKQUAD_LLM_GATEWAY_URL",
             ],
         )
+
+    def test_status_and_metrics_expose_runtime_state(self):
+        try:
+            from fastapi.testclient import TestClient
+        except ModuleNotFoundError:
+            self.skipTest("fastapi is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            state = RuntimeState()
+            state.task_claimed(fake_task("task-1"))
+            state.task_finished("task-1", "done", 1.25)
+            client = TestClient(create_app(config, state))
+
+            status_response = client.get("/status")
+            metrics_response = client.get("/metrics")
+
+            self.assertEqual(status_response.status_code, 200)
+            self.assertEqual(status_response.json()["runtime"]["tasks_claimed"], 1)
+            self.assertIn("skquad_agent_tasks_claimed_total", metrics_response.text)
+            self.assertIn('agent="agent-1"', metrics_response.text)
 
     def test_bootstrap_status_ready_with_required_task_loop_config_and_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -313,6 +343,27 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(client.blocked, [])
             self.assertEqual(client.heartbeats, ["busy", "idle"])
 
+    def test_run_task_once_updates_runtime_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
+            state = RuntimeState()
+
+            run_task_once(
+                config,
+                StaticTaskHandler(TaskResult(status="done", summary="ok")),
+                client,
+                state=state,
+            )
+
+            snapshot = state.snapshot()
+            self.assertEqual(snapshot.tasks_claimed, 1)
+            self.assertEqual(snapshot.tasks_completed, 1)
+            self.assertEqual(snapshot.tasks_blocked, 0)
+            self.assertEqual(snapshot.last_task_id, "task-1")
+            self.assertEqual(snapshot.last_task_status, "done")
+            self.assertEqual(snapshot.active_task_id, "")
+
     def test_run_task_once_persists_handler_summary_as_memory(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = ready_config(tmp)
@@ -325,6 +376,51 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(client.completed, [("task-1", "done")])
             self.assertEqual(client.completion_summaries, ["Ship it."])
             self.assertEqual(client.persist_memory, [True])
+
+    def test_run_task_once_trims_oversized_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential = Path(tmp) / "agent"
+            credential.write_text("credential", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                    "SKQUAD_TASK_LOOP_ENABLED": "false",
+                    "SKQUAD_TASK_SUMMARY_MAX_CHARS": "10",
+                }
+            )
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
+
+            run_task_once(
+                config,
+                StaticTaskHandler(TaskResult(status="done", summary="abcdefghijklmnopqrstuvwxyz")),
+                client,
+            )
+
+            self.assertEqual(client.completion_summaries, ["abcdefghij\n[truncated]"])
+
+    def test_run_task_once_blocks_when_handler_times_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential = Path(tmp) / "agent"
+            credential.write_text("credential", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                    "SKQUAD_TASK_LOOP_ENABLED": "false",
+                    "SKQUAD_TASK_TIMEOUT_SECONDS": "0.01",
+                }
+            )
+            client = FakeControlPlaneClient(claimed_task=fake_task("task-1"))
+            state = RuntimeState()
+
+            task = run_task_once(config, SleepingTaskHandler(0.05), client, state=state)
+
+            self.assertEqual(task.status, "blocked")
+            self.assertEqual(client.blocked, ["task-1"])
+            self.assertEqual(state.snapshot().task_timeouts, 1)
 
     def test_run_inbox_once_acks_successful_messages(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -341,6 +437,22 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(result.failed, 0)
             self.assertEqual(client.acked_messages, ["message-1"])
             self.assertEqual(client.heartbeats, ["busy", "idle"])
+
+    def test_run_inbox_once_updates_runtime_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            client = FakeControlPlaneClient(
+                claimed_task=None,
+                messages=[fake_message("message-1", "ping"), fake_message("message-2", "handoff")],
+            )
+            state = RuntimeState()
+
+            run_inbox_once(config, DefaultMessageHandler(), client, state=state)
+
+            snapshot = state.snapshot()
+            self.assertEqual(snapshot.inbox_fetched, 2)
+            self.assertEqual(snapshot.inbox_processed, 1)
+            self.assertEqual(snapshot.inbox_failed, 1)
 
     def test_run_inbox_once_leaves_failed_messages_pending_for_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -905,6 +1017,15 @@ class SequencedContextClient:
 class RaisingTaskHandler:
     def handle_task(self, _task, _config):
         raise RuntimeError("handler failed")
+
+
+class SleepingTaskHandler:
+    def __init__(self, seconds):
+        self.seconds = seconds
+
+    def handle_task(self, _task, _config):
+        time.sleep(self.seconds)
+        return TaskResult(status="done", summary="late")
 
 
 class EchoPlugin:

@@ -264,6 +264,9 @@ variables:
 | `SKQUAD_TASK_POLL_INTERVAL_SECONDS` | Positive task-loop poll interval. Defaults to `5`. |
 | `SKQUAD_INBOX_POLL_INTERVAL_SECONDS` | Positive inbox poll interval. Defaults to `5`; the current loop sleeps for the lower of task/inbox intervals. |
 | `SKQUAD_INBOX_BATCH_SIZE` | Maximum inbox messages handled per loop iteration. Defaults to `5`. |
+| `SKQUAD_TASK_TIMEOUT_SECONDS` | Maximum wall-clock seconds the runtime waits for a task handler before blocking the task. Defaults to `900`. |
+| `SKQUAD_MAX_LLM_STEPS` | Maximum LiteLLM/tool-call iterations per task. Defaults to `8`. |
+| `SKQUAD_TASK_SUMMARY_MAX_CHARS` | Maximum task completion summary sent back to the control plane. Defaults to `4000`. |
 | `SKQUAD_PLUGIN_MODULES` | Comma-separated plugin import specs (`module`, `module:factory`, `module:plugin`, or `module:Plugin`). |
 | `SKQUAD_ENABLED_PLUGINS` | Optional comma-separated allowlist of loaded plugin names. Missing enabled names fail startup. |
 
@@ -272,6 +275,12 @@ returns raw credential values. When the task loop is enabled, `/readyz` requires
 agent identity, control-plane URL, LLM gateway URL, default model/provider hint,
 agent credential, and LLM gateway virtual key. With the task loop disabled,
 readiness only requires the base agent identity and credential.
+
+`/status` returns readiness plus in-process runtime counters such as claimed,
+completed, blocked, errored, timed-out, and inbox message totals. `/metrics`
+exposes the same counters as Prometheus text without requiring the Prometheus
+client library in the runtime image. The metrics endpoint does not include task
+titles, message payloads, completion summaries, or credential material.
 
 Current implementation includes a small control-plane client, a `poll_once`
 claim/heartbeat primitive, a handler-driven `run_task_once` execution
@@ -291,6 +300,13 @@ registry/runtime slices.
   (mark `blocked`) and to the owner.
 - **Plugin errors** — caught per-invocation; reported to the LLM as a tool
   result (so it can adapt) and logged.
+- **Execution timeout** — if `SKQUAD_TASK_TIMEOUT_SECONDS` elapses, the runtime
+  marks the task blocked and increments the timeout/error counters. Python
+  cannot forcibly stop arbitrary plugin code inside the same process, so
+  plugin authors should make long-running work cooperative and idempotent.
+- **Execution limits** — `SKQUAD_MAX_LLM_STEPS` caps the agent/tool loop and
+  `SKQUAD_TASK_SUMMARY_MAX_CHARS` bounds data persisted back to the control
+  plane.
 - **Crashloop** — the operator restarts the pod; the task is re-queued (idempotent
   pickup).
 - **Audit** — significant actions (task start/complete, memory writes, messages)

@@ -43,6 +43,12 @@ spec:
               value: {{ .Values.agent.inboxPollIntervalSeconds | quote }}
             - name: SKQUAD_AGENT_INBOX_BATCH_SIZE
               value: {{ .Values.agent.inboxBatchSize | quote }}
+            - name: SKQUAD_AGENT_TASK_TIMEOUT_SECONDS
+              value: {{ .Values.agent.taskTimeoutSeconds | quote }}
+            - name: SKQUAD_AGENT_MAX_LLM_STEPS
+              value: {{ .Values.agent.maxLLMSteps | quote }}
+            - name: SKQUAD_AGENT_TASK_SUMMARY_MAX_CHARS
+              value: {{ .Values.agent.taskSummaryMaxChars | quote }}
           livenessProbe:
             httpGet:
               path: /healthz

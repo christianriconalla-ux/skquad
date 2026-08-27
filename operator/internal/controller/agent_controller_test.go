@@ -130,6 +130,15 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	if got := envValue(container.Env, "SKQUAD_INBOX_BATCH_SIZE"); got != "5" {
 		t.Fatalf("inbox batch size env = %q, want 5", got)
 	}
+	if got := envValue(container.Env, "SKQUAD_TASK_TIMEOUT_SECONDS"); got != "900" {
+		t.Fatalf("task timeout env = %q, want 900", got)
+	}
+	if got := envValue(container.Env, "SKQUAD_MAX_LLM_STEPS"); got != "8" {
+		t.Fatalf("max llm steps env = %q, want 8", got)
+	}
+	if got := envValue(container.Env, "SKQUAD_TASK_SUMMARY_MAX_CHARS"); got != "4000" {
+		t.Fatalf("summary max chars env = %q, want 4000", got)
+	}
 	if got := deployment.Spec.Template.Labels["skquad.io/agent-id"]; got != agent.Spec.AgentID {
 		t.Fatalf("agent label = %q, want %q", got, agent.Spec.AgentID)
 	}
