@@ -313,7 +313,8 @@ func TestSquadAndAgentMutationsWriteCustomResources(t *testing.T) {
 func TestAgentIdentityCreateAndRotate(t *testing.T) {
 	t.Parallel()
 
-	handler := New(testConfig(), storage.NewMemoryStore())
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
 
 	var squad domain.Squad
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
@@ -347,6 +348,12 @@ func TestAgentIdentityCreateAndRotate(t *testing.T) {
 	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
 	require.Contains(t, auditActions(audit), "agent_identity.create")
 	require.Contains(t, auditActions(audit), "agent_identity.rotate")
+	require.Equal(t, []string{
+		"upsert-squad:" + squad.ID,
+		"upsert-agent:" + agent.ID,
+		"upsert-agent:" + agent.ID,
+		"upsert-agent:" + agent.ID,
+	}, crWriter.ops)
 }
 
 func TestAgentPermissionsSetAndList(t *testing.T) {
@@ -490,7 +497,7 @@ func (f *fakeCRWriter) DeleteSquad(_ context.Context, squad *domain.Squad) error
 	return nil
 }
 
-func (f *fakeCRWriter) UpsertAgent(_ context.Context, agent *domain.Agent) error {
+func (f *fakeCRWriter) UpsertAgent(_ context.Context, agent *domain.Agent, _ *domain.AgentIdentity) error {
 	f.ops = append(f.ops, "upsert-agent:"+agent.ID)
 	return nil
 }

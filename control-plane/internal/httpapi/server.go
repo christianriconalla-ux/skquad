@@ -52,7 +52,7 @@ type OIDCAuthenticator interface {
 type CRWriter interface {
 	UpsertSquad(ctx context.Context, squad *domain.Squad) error
 	DeleteSquad(ctx context.Context, squad *domain.Squad) error
-	UpsertAgent(ctx context.Context, agent *domain.Agent) error
+	UpsertAgent(ctx context.Context, agent *domain.Agent, identity *domain.AgentIdentity) error
 	DeleteAgent(ctx context.Context, agent *domain.Agent) error
 }
 
@@ -145,7 +145,9 @@ type noopCRWriter struct{}
 
 func (noopCRWriter) UpsertSquad(context.Context, *domain.Squad) error { return nil }
 func (noopCRWriter) DeleteSquad(context.Context, *domain.Squad) error { return nil }
-func (noopCRWriter) UpsertAgent(context.Context, *domain.Agent) error { return nil }
+func (noopCRWriter) UpsertAgent(context.Context, *domain.Agent, *domain.AgentIdentity) error {
+	return nil
+}
 func (noopCRWriter) DeleteAgent(context.Context, *domain.Agent) error { return nil }
 
 type principalKey struct{}
@@ -766,7 +768,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.crWriter.UpsertAgent(r.Context(), created); err != nil {
+	if err := s.upsertAgentCR(r.Context(), created); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
 		return
 	}
@@ -840,7 +842,7 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.crWriter.UpsertAgent(r.Context(), updated); err != nil {
+	if err := s.upsertAgentCR(r.Context(), updated); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
 		return
 	}
@@ -887,6 +889,10 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
+	if err := s.crWriter.UpsertAgent(r.Context(), agent, created); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
+		return
+	}
 	s.recordUserAudit(r, "agent_identity.create", "agent_identity", created.ID, agent.SquadID, nil)
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -904,6 +910,10 @@ func (s *Server) rotateAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	identity, err := s.store.RotateAgentIdentity(r.Context(), agent.ID, generatedCredentialRef(squad.Namespace, agent.ID))
 	if err != nil {
 		writeStorageError(w, err)
+		return
+	}
+	if err := s.crWriter.UpsertAgent(r.Context(), agent, identity); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to write agent custom resource")
 		return
 	}
 	s.recordUserAudit(r, "agent_identity.rotate", "agent_identity", identity.ID, agent.SquadID, nil)
@@ -1389,6 +1399,17 @@ func (s *Server) recordUserAudit(r *http.Request, action, resourceType, resource
 		SquadID:      squadID,
 		Metadata:     metadata,
 	})
+}
+
+func (s *Server) upsertAgentCR(ctx context.Context, agent *domain.Agent) error {
+	identity, err := s.store.GetAgentIdentity(ctx, agent.ID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return s.crWriter.UpsertAgent(ctx, agent, nil)
+		}
+		return err
+	}
+	return s.crWriter.UpsertAgent(ctx, agent, identity)
 }
 
 func auditLimit(r *http.Request) int {

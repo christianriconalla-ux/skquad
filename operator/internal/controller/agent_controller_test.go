@@ -42,6 +42,8 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 			Role:              "worker",
 			DefaultProviderID: "provider-id",
 			Image:             "example.com/skquad/agent:test",
+			CredentialSecret:  "agent-credential",
+			VirtualKeySecret:  "agent-virtual-key",
 			IdleTimeout:       "300s",
 			DesiredActive:     true,
 		},
@@ -74,6 +76,25 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	}
 	if got := deployment.Spec.Template.Labels["skquad.io/agent-id"]; got != agent.Spec.AgentID {
 		t.Fatalf("agent label = %q, want %q", got, agent.Spec.AgentID)
+	}
+	if got := len(deployment.Spec.Template.Spec.Volumes); got != 2 {
+		t.Fatalf("volume count = %d, want 2", got)
+	}
+	if got := deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName; got != agent.Spec.CredentialSecret {
+		t.Fatalf("credential secret = %q, want %q", got, agent.Spec.CredentialSecret)
+	}
+	if got := deployment.Spec.Template.Spec.Volumes[1].Secret.SecretName; got != agent.Spec.VirtualKeySecret {
+		t.Fatalf("virtual key secret = %q, want %q", got, agent.Spec.VirtualKeySecret)
+	}
+	mounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
+	if got := len(mounts); got != 2 {
+		t.Fatalf("volume mount count = %d, want 2", got)
+	}
+	if got := mounts[0].MountPath; got != credentialsMount+"/agent" {
+		t.Fatalf("credential mount path = %q, want %q", got, credentialsMount+"/agent")
+	}
+	if !mounts[0].ReadOnly || !mounts[1].ReadOnly {
+		t.Fatal("secret mounts must be read-only")
 	}
 }
 

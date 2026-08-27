@@ -75,7 +75,25 @@ func (w *CRWriter) DeleteSquad(ctx context.Context, squad *domain.Squad) error {
 	return w.delete(ctx, "squads", squadCRName(squad.ID))
 }
 
-func (w *CRWriter) UpsertAgent(ctx context.Context, agent *domain.Agent) error {
+func (w *CRWriter) UpsertAgent(ctx context.Context, agent *domain.Agent, identity *domain.AgentIdentity) error {
+	spec := map[string]any{
+		"agentId":           agent.ID,
+		"squadId":           agent.SquadID,
+		"role":              agent.Role,
+		"defaultProviderId": agent.DefaultProvider,
+		"image":             w.agentImage,
+		"permissions":       rawJSON(agent.Permissions, []any{}),
+		"idleTimeout":       fmt.Sprintf("%ds", agent.IdleTimeoutSec),
+		"desiredActive":     agent.Status == domain.AgentBusy,
+	}
+	if identity != nil {
+		if secretName := secretNameFromRef(identity.CredentialRef); secretName != "" {
+			spec["credentialSecret"] = secretName
+		}
+		if secretName := secretNameFromRef(identity.VirtualKeyRef); secretName != "" {
+			spec["virtualKeySecret"] = secretName
+		}
+	}
 	body := map[string]any{
 		"apiVersion": w.groupVersion,
 		"kind":       "Agent",
@@ -88,16 +106,7 @@ func (w *CRWriter) UpsertAgent(ctx context.Context, agent *domain.Agent) error {
 				"skquad.io/squad-id":           agent.SquadID,
 			},
 		},
-		"spec": map[string]any{
-			"agentId":           agent.ID,
-			"squadId":           agent.SquadID,
-			"role":              agent.Role,
-			"defaultProviderId": agent.DefaultProvider,
-			"image":             w.agentImage,
-			"permissions":       rawJSON(agent.Permissions, []any{}),
-			"idleTimeout":       fmt.Sprintf("%ds", agent.IdleTimeoutSec),
-			"desiredActive":     agent.Status == domain.AgentBusy,
-		},
+		"spec": spec,
 	}
 	return w.apply(ctx, "agents", agentCRName(agent.ID), body)
 }
@@ -175,4 +184,22 @@ func squadCRName(id string) string {
 
 func agentCRName(id string) string {
 	return "agent-" + id
+}
+
+func secretNameFromRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if strings.HasPrefix(ref, "k8s://") {
+		parts := strings.Split(strings.TrimPrefix(ref, "k8s://"), "/")
+		if len(parts) >= 2 {
+			return parts[len(parts)-1]
+		}
+		return ""
+	}
+	if strings.Contains(ref, "://") || strings.Contains(ref, "/") {
+		return ""
+	}
+	return ref
 }

@@ -76,6 +76,8 @@ type AgentSpec struct {
 	Role              string               `json:"role,omitempty"`
 	DefaultProviderID string               `json:"defaultProviderId,omitempty"`
 	Image             string               `json:"image"`
+	CredentialSecret  string               `json:"credentialSecret,omitempty"`
+	VirtualKeySecret  string               `json:"virtualKeySecret,omitempty"`
 	Permissions       apiextensionsv1.JSON `json:"permissions,omitempty"`
 	IdleTimeout       string               `json:"idleTimeout,omitempty"`
 	DesiredActive     bool                 `json:"desiredActive"`

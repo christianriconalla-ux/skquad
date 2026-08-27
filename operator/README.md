@@ -27,7 +27,9 @@ operator/
   ResourceQuota, and records basic ready status
 - First `Agent` reconciler: resolves the owning squad namespace, creates/updates
   the agent Deployment, sets scale-to-zero replicas from `desiredActive`, uses
-  the squad agent ServiceAccount, and writes basic ready status
+  the squad agent ServiceAccount, mounts optional agent credential/virtual-key
+  Secrets, and writes basic ready status
+- Helm CRDs for `squads.skquad.io` and `agents.skquad.io`
 
-Next slices are agent secrets/credential mounts, richer network egress policies,
-and generated CRD YAML.
+Next slices are richer network egress policies, operator RBAC/deployment
+templates, and the agent runtime bootstrap contract.

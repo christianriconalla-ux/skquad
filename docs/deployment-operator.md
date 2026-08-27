@@ -74,6 +74,8 @@ spec:
   role: "coder"
   defaultModel: "gpt-4o"
   image: skquad/agent-runtime:<tag>
+  credentialSecret: agent-<id>-credential
+  virtualKeySecret: agent-<id>-virtual-key
   permissions: { ... }      # registry resource refs
   idleTimeout: 300s
   desiredActive: true|false  # set by control plane when work is pending
@@ -113,7 +115,8 @@ When the operator sees an `Agent` CR:
 1. **Create the agent Deployment** in the squad namespace:
    - Image: the agent runtime.
    - **Replicas:** `1` if `desiredActive`, else `0` (scale-to-zero).
-   - **Secrets:** mount the agent's credential + LLM gateway virtual key.
+   - **Secrets:** mount the agent's credential + LLM gateway virtual key when
+     the Agent CR includes Kubernetes Secret names.
    - **Env:** agent config (role, default model, permissions, endpoints).
    - **Probes:** `/healthz`, `/readyz`.
    - **Resources:** requests/limits (configurable).

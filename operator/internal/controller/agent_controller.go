@@ -19,6 +19,7 @@ import (
 const (
 	agentContainerName = "agent"
 	defaultAgentImage  = "skquad/agent-runtime:0.1.0"
+	credentialsMount   = "/var/run/skquad/credentials"
 )
 
 // AgentReconciler reconciles Agent resources into per-agent Deployments.
@@ -53,7 +54,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		deployment.Spec.Template.ObjectMeta.Labels = labels
 		deployment.Spec.Template.Spec.ServiceAccountName = agentServiceAccountName
-		deployment.Spec.Template.Spec.Containers = []corev1.Container{{
+		container := corev1.Container{
 			Name:  agentContainerName,
 			Image: agentImage(&agent),
 			Env: []corev1.EnvVar{
@@ -63,7 +64,15 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				{Name: "SKQUAD_DEFAULT_PROVIDER_ID", Value: agent.Spec.DefaultProviderID},
 				{Name: "SKQUAD_IDLE_TIMEOUT", Value: agent.Spec.IdleTimeout},
 			},
-		}}
+		}
+		volumes := agentSecretVolumes(&agent)
+		if len(volumes) > 0 {
+			container.VolumeMounts = agentSecretVolumeMounts(&agent)
+			deployment.Spec.Template.Spec.Volumes = volumes
+		} else {
+			deployment.Spec.Template.Spec.Volumes = nil
+		}
+		deployment.Spec.Template.Spec.Containers = []corev1.Container{container}
 		return nil
 	})
 	if err != nil {
@@ -137,4 +146,44 @@ func agentImage(agent *skquadv1.Agent) string {
 		return defaultAgentImage
 	}
 	return agent.Spec.Image
+}
+
+func agentSecretVolumes(agent *skquadv1.Agent) []corev1.Volume {
+	var volumes []corev1.Volume
+	if agent.Spec.CredentialSecret != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "agent-credential",
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: agent.Spec.CredentialSecret,
+			}},
+		})
+	}
+	if agent.Spec.VirtualKeySecret != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "agent-virtual-key",
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: agent.Spec.VirtualKeySecret,
+			}},
+		})
+	}
+	return volumes
+}
+
+func agentSecretVolumeMounts(agent *skquadv1.Agent) []corev1.VolumeMount {
+	var mounts []corev1.VolumeMount
+	if agent.Spec.CredentialSecret != "" {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "agent-credential",
+			MountPath: credentialsMount + "/agent",
+			ReadOnly:  true,
+		})
+	}
+	if agent.Spec.VirtualKeySecret != "" {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "agent-virtual-key",
+			MountPath: credentialsMount + "/llm-gateway",
+			ReadOnly:  true,
+		})
+	}
+	return mounts
 }
