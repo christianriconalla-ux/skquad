@@ -25,5 +25,9 @@ operator/
 - First `Squad` reconciler: creates/labels the configured squad namespace,
   creates the `skquad-agent` ServiceAccount, default-deny NetworkPolicy, starter
   ResourceQuota, and records basic ready status
+- First `Agent` reconciler: resolves the owning squad namespace, creates/updates
+  the agent Deployment, sets scale-to-zero replicas from `desiredActive`, uses
+  the squad agent ServiceAccount, and writes basic ready status
 
-Next slice is the Agent reconciler.
+Next slices are agent secrets/credential mounts, richer network egress policies,
+and generated CRD YAML.

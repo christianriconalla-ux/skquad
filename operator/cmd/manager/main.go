@@ -60,6 +60,13 @@ func main() {
 		ctrl.Log.Error(err, "unable to create Squad controller")
 		os.Exit(1)
 	}
+	if err := (&controller.AgentReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		ctrl.Log.Error(err, "unable to create Agent controller")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		ctrl.Log.Error(err, "unable to set up health check")
