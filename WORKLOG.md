@@ -1,5 +1,12 @@
 # WORKLOG
 
+## 2026-08-28 01:02:44 ACST
+
+- objective: Add CI-runnable integration and end-to-end smoke coverage.
+- files changed: `.github/workflows/ci.yml`, `tests/integration/test_smoke.py`, `docs/testing-strategy.md`, `docs/ci-cd.md`, `README.md`, `WORKLOG.md`.
+- command/test run: `python3 -m unittest discover -s tests/integration`.
+- result: Added a root integration smoke suite that exercises representative control-plane runtime endpoints, Kubernetes outbox and CR-writer paths, operator reconciler contracts, runtime tests, and Helm render wiring. Wired the suite into GitHub Actions as `Integration smoke` and documented fast CI versus cluster-required verification boundaries. Local integration smoke suite passed.
+
 ## 2026-08-27 16:33:03 ACST
 
 - objective: Continue Skquad control-plane implementation.

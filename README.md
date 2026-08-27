@@ -170,10 +170,13 @@ Run the main repository checks:
 (cd web && npm ci && npm run build)
 helm lint charts/skquad
 helm template skquad charts/skquad --namespace skquad-system --include-crds >/dev/null
+python3 -m unittest discover -s tests/integration
 ```
 
 The CI workflow also builds and smoke-tests the LiteLLM gateway container. See
-the [CI/CD guide](docs/ci-cd.md) for image names, tags, and publishing behavior.
+the [CI/CD guide](docs/ci-cd.md) for image names, tags, and publishing behavior,
+and the [testing strategy](docs/testing-strategy.md) for the integration smoke
+suite and cluster-required checks.
 
 ## Documentation
 
@@ -183,7 +186,7 @@ the [CI/CD guide](docs/ci-cd.md) for image names, tags, and publishing behavior.
 | System design | [Architecture](docs/ARCHITECTURE.md), [data model](docs/data-model.md), [API design](docs/api-design.md), [ADRs](docs/adr/) |
 | Agent execution | [Runtime](docs/agent-runtime.md), [task lifecycle](docs/kanban-task-lifecycle.md), [messaging](docs/collaboration-messaging.md), [plugins](docs/plugin-architecture.md) |
 | Platform services | [LLM gateway](docs/llm-gateway.md), [resource registry](docs/resource-registry.md), [operator and deployment](docs/deployment-operator.md) |
-| Operations and security | [Identity and security](docs/identity-security.md), [threat model](docs/security-threat-model.md), [observability and metering](docs/observability-metering.md), [CI/CD](docs/ci-cd.md) |
+| Operations and security | [Identity and security](docs/identity-security.md), [threat model](docs/security-threat-model.md), [observability and metering](docs/observability-metering.md), [CI/CD](docs/ci-cd.md), [testing strategy](docs/testing-strategy.md) |
 | User experience | [Web application UX](docs/web-app-ux.md) |
 
 ## Security and production use

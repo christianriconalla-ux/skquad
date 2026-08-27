@@ -25,6 +25,7 @@ still defaults to development authentication.
 | Operator | `go vet ./...` and `go test ./...` in `operator/` |
 | Agent runtime | installs the Python package, runs `unittest`, and compiles runtime/test modules |
 | LLM gateway | validates Python project metadata/config, builds the gateway image, imports the Skquad LiteLLM callback inside the image, checks generated Prisma client artifacts against Postgres, and smoke-tests LiteLLM readiness against Postgres |
+| Integration smoke | runs representative cross-component API, outbox, operator, runtime, and Helm contract checks from `tests/integration` |
 | Helm chart | `helm lint`, default chart render, and provider-configured gateway render |
 | Web | deterministic `npm ci` and `next build` |
 
@@ -68,6 +69,7 @@ secrets:
 
 ## Follow-Up Work
 
-- Add integration/end-to-end tests once representative fixtures are available.
+- Add slower cluster-backed end-to-end tests for real agent pod execution and
+  GitOps rollout once representative fixtures are available.
 - Optionally replace manual GitOps promotion commits with ArgoCD Image Updater
   or a guarded workflow that opens promotion pull requests.

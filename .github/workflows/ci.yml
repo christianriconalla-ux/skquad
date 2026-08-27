@@ -162,6 +162,29 @@ jobs:
           docker logs skquad-llm-gateway-smoke
           exit 1
 
+  integration-smoke:
+    name: Integration smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: |
+            control-plane/go.sum
+            operator/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: azure/setup-helm@v4
+      - name: Install agent runtime
+        working-directory: agent-runtime
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -e .
+      - name: Run integration smoke suite
+        run: python3 -m unittest discover -s tests/integration
+
   helm:
     name: Helm chart
     runs-on: ubuntu-latest
