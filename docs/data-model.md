@@ -6,9 +6,9 @@
 > long-term memory, audit log, metering, and the v1 message queue. This is the
 > physical schema behind the [domain model](domain-model.md).
 >
-> The current schema is implemented as embedded SQL plus idempotent startup
-> execution. A migration ledger and safer multi-replica migration locking remain
-> follow-up work; see [`implementation-status.md`](implementation-status.md).
+> The current schema is implemented as embedded numbered SQL migrations.
+> Startup migration execution is serialized with a Postgres advisory lock and
+> recorded in `schema_migrations` by filename and SHA-256 checksum.
 
 ---
 
@@ -41,6 +41,12 @@ CREATE UNIQUE INDEX idx_users_oidc_subject
     ON users(oidc_issuer, oidc_subject)
     WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL;
 CREATE INDEX idx_users_email ON users(email);
+
+CREATE TABLE schema_migrations (
+    version    text PRIMARY KEY,        -- migration filename, e.g. 0001_init.sql
+    checksum   text NOT NULL,           -- SHA-256 of embedded SQL bytes
+    applied_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE agent_identities (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),

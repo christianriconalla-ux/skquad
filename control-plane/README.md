@@ -27,8 +27,10 @@ SKQUAD_ADDR=127.0.0.1:8080 go run ./cmd/api
 ```
 
 By default it uses a process-local in-memory store. Set
-`SKQUAD_DATABASE_URL` to use Postgres; embedded idempotent migrations are
-applied at startup.
+`SKQUAD_DATABASE_URL` to use Postgres. Embedded SQL migrations are applied at
+startup under a Postgres advisory lock and recorded in `schema_migrations` by
+filename and SHA-256 checksum, so multiple API replicas cannot apply migration
+files concurrently.
 
 Authentication defaults to `SKQUAD_AUTH_MODE=dev`. Set `SKQUAD_AUTH_MODE=oidc`
 with `SKQUAD_OIDC_ISSUER` and `SKQUAD_OIDC_AUDIENCE` to validate OIDC bearer

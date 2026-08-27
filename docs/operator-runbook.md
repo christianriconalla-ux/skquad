@@ -193,6 +193,21 @@ kubectl --namespace squad-<id> get deploy <agent-cr-name> \
   -o jsonpath='{.spec.template.spec.volumes[*].secret.secretName}{"\n"}{.spec.template.spec.containers[0].volumeMounts[*].mountPath}{"\n"}'
 ```
 
+## Database Migrations
+
+When `SKQUAD_DATABASE_URL` is set, each API server replica runs embedded
+Postgres migrations during startup. Migration execution is serialized with a
+Postgres advisory lock, then each applied SQL file is recorded in
+`schema_migrations` with its filename and SHA-256 checksum.
+
+Operational boundaries:
+
+- do not edit an already-applied migration file; add the next numbered file;
+- a checksum mismatch means the embedded migration history changed after being
+  applied and startup should fail until the history is corrected;
+- rollback is a database restore or forward-fix migration, not an automatic down
+  migration.
+
 ## Ingress
 
 Ingress is disabled by default:

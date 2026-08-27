@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,13 +24,21 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+const migrationLockKey int64 = 0x5A51444144
+
+type migrationFile struct {
+	Version  string
+	SQL      string
+	Checksum string
+}
+
 // PostgresStore persists control-plane data in Postgres.
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresStore connects to Postgres, pings it, and applies idempotent
-// embedded migrations.
+// NewPostgresStore connects to Postgres, pings it, and applies embedded
+// migrations under a Postgres advisory lock.
 func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -53,24 +63,121 @@ func (p *PostgresStore) Close() {
 }
 
 func (p *PostgresStore) migrate(ctx context.Context) error {
+	conn, err := p.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("postgres: acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationLockKey)
+	}()
+
+	if err := ensureSchemaMigrations(ctx, conn); err != nil {
+		return err
+	}
+	migrations, err := readMigrationFiles()
+	if err != nil {
+		return err
+	}
+	for _, migration := range migrations {
+		applied, err := migrationApplied(ctx, conn, migration)
+		if err != nil {
+			return err
+		}
+		if applied {
+			continue
+		}
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("postgres: begin migration %s: %w", migration.Version, err)
+		}
+		if err := applyMigrationTx(ctx, tx, migration); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("postgres: commit migration %s: %w", migration.Version, err)
+		}
+	}
+	return nil
+}
+
+func readMigrationFiles() ([]migrationFile, error) {
 	entries, err := fs.ReadDir(migrationFS, "migrations")
 	if err != nil {
-		return fmt.Errorf("postgres: read migrations: %w", err)
+		return nil, fmt.Errorf("postgres: read migrations: %w", err)
 	}
 	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
 		return strings.Compare(a.Name(), b.Name())
 	})
+	migrations := []migrationFile{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		sql, err := migrationFS.ReadFile("migrations/" + entry.Name())
+		body, err := migrationFS.ReadFile("migrations/" + entry.Name())
 		if err != nil {
-			return fmt.Errorf("postgres: read migration %s: %w", entry.Name(), err)
+			return nil, fmt.Errorf("postgres: read migration %s: %w", entry.Name(), err)
 		}
-		if _, err := p.pool.Exec(ctx, string(sql)); err != nil {
-			return fmt.Errorf("postgres: apply migration %s: %w", entry.Name(), err)
-		}
+		migrations = append(migrations, migrationFile{
+			Version:  entry.Name(),
+			SQL:      string(body),
+			Checksum: migrationChecksum(body),
+		})
+	}
+	return migrations, nil
+}
+
+func migrationChecksum(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func ensureSchemaMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+	if _, err := conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version    text PRIMARY KEY,
+			checksum   text NOT NULL,
+			applied_at timestamptz NOT NULL DEFAULT now()
+		)
+	`); err != nil {
+		return fmt.Errorf("postgres: ensure schema_migrations: %w", err)
+	}
+	return nil
+}
+
+func migrationApplied(ctx context.Context, conn *pgxpool.Conn, migration migrationFile) (bool, error) {
+	var checksum string
+	err := conn.QueryRow(ctx, `
+		SELECT checksum
+		FROM schema_migrations
+		WHERE version = $1
+	`, migration.Version).Scan(&checksum)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("postgres: read migration ledger %s: %w", migration.Version, err)
+	}
+	if checksum != migration.Checksum {
+		return false, fmt.Errorf("postgres: migration %s checksum mismatch", migration.Version)
+	}
+	return true, nil
+}
+
+func applyMigrationTx(ctx context.Context, tx pgx.Tx, migration migrationFile) error {
+	if _, err := tx.Exec(ctx, migration.SQL); err != nil {
+		return fmt.Errorf("postgres: apply migration %s: %w", migration.Version, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO schema_migrations (version, checksum)
+		VALUES ($1, $2)
+	`, migration.Version, migration.Checksum); err != nil {
+		return fmt.Errorf("postgres: record migration %s: %w", migration.Version, err)
 	}
 	return nil
 }
