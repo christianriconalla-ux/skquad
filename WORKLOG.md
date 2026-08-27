@@ -377,3 +377,10 @@
 - files changed: `README.md`, `docs/ci-cd.md`, `docs/web-app-ux.md`, `web/README.md`, `web/src/app/globals.css`, `web/src/app/page.tsx`, `web/src/lib/api.ts`, `WORKLOG.md`.
 - command/test run: `npm run lint` and `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`.
 - result: Added web UI for loading registry catalogs, registering/deprecating LLM providers and generic registry resources, granting/revoking registry resources for the selected agent, creating/revoking squad access grants, and showing platform audit plus metering summary in the admin view. Docs now describe the implemented first-pass registry/grant/admin surfaces and remaining richer UX work.
+
+## 2026-08-28 01:24:40 ACST
+
+- objective: Upgrade web dependencies for Next/PostCSS audit findings.
+- files changed: `web/package.json`, `web/package-lock.json`, `web/eslint.config.mjs`, `web/.eslintrc.json`, `web/next-env.d.ts`, `web/tsconfig.json`, `web/README.md`, `docs/implementation-status.md`, `WORKLOG.md`.
+- command/test run: `npm ci`; `npm audit --audit-level=moderate`; `npm run lint`; `NEXT_TELEMETRY_DISABLED=1 npm run build`; `git diff --check`.
+- result: Upgraded the web app to Next.js 16.3.3 and ESLint 9, replaced the removed `next lint` path with ESLint flat config, accepted Next 16's generated TypeScript defaults, and cleared the Next/PostCSS audit findings.

@@ -1,6 +1,6 @@
 # skquad Web App
 
-The SPA (React / Next.js, TypeScript). The primary interface for users,
+The SPA (React / Next.js 16, TypeScript). The primary interface for users,
 optimised for simplicity: onboarding in a few clicks, and the Kanban board as
 the centre of daily use.
 
@@ -38,6 +38,10 @@ web/
 ## Verification
 
 ```
+npm audit --audit-level=moderate
 npm run lint
 NEXT_TELEMETRY_DISABLED=1 npm run build
 ```
+
+The app uses ESLint 9 flat config via `eslint.config.mjs`; the old `next lint`
+entrypoint is not used with the current Next.js version.

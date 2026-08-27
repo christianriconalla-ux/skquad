@@ -14,7 +14,7 @@ or `Accepted` status means "design accepted", not "fully implemented".
 | Helm chart | CRDs, API server, operator, LiteLLM gateway, web app, optional PostgreSQL, ingress toggle, external Secret knobs, image values, runtime config wiring, and RBAC for current controllers. |
 | Agent runtime | Bootstrap/readiness, mounted Secret loading, task loop, inbox draining, LiteLLM handler, importlib plugin loading, per-task context fetch, permission-filtered tool exposure, and bounded memory persistence. |
 | LiteLLM gateway | Charted LiteLLM proxy, Postgres-backed virtual-key storage, master-key wiring, callback module, image smoke tests, and API-side virtual-key generation for active provider grants. |
-| Web app | Authenticated Next.js shell with first-pass squad, agent, task, identity, chat, registry, grant, audit, and metering workflows. |
+| Web app | Authenticated Next.js 16 shell with first-pass squad, agent, task, identity, chat, registry, grant, audit, and metering workflows. Current package audit is clean at `moderate` and above. |
 | CI/CD | Real validation CI, integration smoke, deployable images, GHCR publishing, optional Docker Hub mirroring, and lab GitOps promotion path. |
 
 ## Explicit Boundaries
@@ -30,7 +30,6 @@ These items are not implemented yet and must not be implied as production-ready:
 | Immutable migration ledger, migration locking, and safer multi-replica startup migrations. | Kanbunny `c8f6bb7d-d8a5-43c5-b814-52e8da5890d1` - `Version database migrations with ledger and lock`. |
 | Semantic memory embeddings, trust labels, distilled memory, and provenance-aware retrieval. | Kanbunny `da19b194-d738-4d95-84dc-a8287d8e2e3f` - `Harden semantic memory with embeddings and trust boundaries`. |
 | Richer browser UI polish and public product website. | Kanbunny `6947922e-903c-4843-8f59-828db1a6e481` - `Create the skquad product website`. |
-| Web dependency audit cleanup. | Kanbunny `708e0738-d292-445b-b522-633afb137a25` - `Upgrade web dependencies for Next/PostCSS audit findings`. |
 
 ## Reading the Docs
 
