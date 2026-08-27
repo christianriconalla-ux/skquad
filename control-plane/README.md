@@ -73,7 +73,7 @@ Implemented slice:
 - Consistent JSON error envelopes
 - Process-local in-memory store for development and handler tests
 - Postgres-backed user/squad/agent/identity/permission/board/task/access-grant/
-  registry, metering, and audit storage
+  registry, metering, audit, message-inbox schema, and agent-memory schema
 - OIDC bearer JWT validation with first-login user provisioning
 - Owner/admin/granted-user read authorization for squad resources
 - Platform-admin authorization for registry writes

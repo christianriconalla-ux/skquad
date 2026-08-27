@@ -2,6 +2,7 @@
 -- Mirrors docs/data-model.md. Secrets are never stored here — only *_ref
 -- (K8s secret references).
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ---------------------------------------------------------------------------
 -- Users (Layer-1 RBAC principals)
@@ -168,6 +169,29 @@ CREATE TABLE IF NOT EXISTS access_grants (
 CREATE INDEX IF NOT EXISTS idx_access_grants_squad ON access_grants(squad_id);
 
 -- ---------------------------------------------------------------------------
+-- Messages (v1 Postgres-backed per-agent inbox)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS messages (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_type      text NOT NULL CHECK (from_type IN ('agent','user')),
+    from_id        uuid NOT NULL,
+    to_agent_id    uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    squad_id       uuid NOT NULL REFERENCES squads(id) ON DELETE CASCADE,
+    type           text NOT NULL
+                   CHECK (type IN ('consult','delegate','handoff','ping','reply')),
+    payload        jsonb NOT NULL DEFAULT '{}',
+    status         text NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','delivered','expired','dead')),
+    correlation_id uuid,
+    ttl            interval,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    delivered_at   timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_messages_inbox ON messages(to_agent_id, status, created_at)
+    WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_messages_squad ON messages(squad_id, created_at);
+
+-- ---------------------------------------------------------------------------
 -- Metering (token usage; partition by month in production)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS metering (
@@ -201,3 +225,21 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_squad ON audit_log(squad_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id, timestamp);
+
+-- ---------------------------------------------------------------------------
+-- Agent long-term memory (semantic memory via pgvector)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS agent_memory (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id       uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    squad_id       uuid REFERENCES squads(id) ON DELETE CASCADE,
+    content        text NOT NULL,
+    embedding      vector(1536),
+    source_task_id uuid REFERENCES tasks(id) ON DELETE SET NULL,
+    metadata       jsonb NOT NULL DEFAULT '{}',
+    created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_memory_agent ON agent_memory(agent_id);
+CREATE INDEX IF NOT EXISTS idx_memory_squad ON agent_memory(squad_id) WHERE squad_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_embedding ON agent_memory
+    USING ivfflat (embedding vector_cosine_ops);
