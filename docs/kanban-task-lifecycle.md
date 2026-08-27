@@ -133,8 +133,10 @@ When an agent picks up a task:
 
 ## 7. Relationship to Other Components
 
-- **Operator** — scales the assignee agent up when a task is assigned/picked up,
-  and back to zero when idle.
+- **Control plane** — mirrors assigned `todo`/`in-progress` task state into the
+  Agent CR so `desiredActive` wakes or keeps the assignee warm.
+- **Operator** — scales the assignee Deployment up from `desiredActive`, and
+  back to zero when idle timeout handling says it is safe.
 - **Agent runtime** — picks up the task, resets context, runs the loop, updates
   status.
 - **Message queue** — delegation / cross-squad handoff create tasks + pings

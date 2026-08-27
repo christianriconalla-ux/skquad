@@ -1228,6 +1228,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
+	if created.AssigneeAgentID != "" {
+		if err := s.syncAgentStatusFromPendingWork(r.Context(), created.AssigneeAgentID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to update assigned agent state")
+			return
+		}
+	}
 	s.recordUserAudit(r, "task.create", "task", created.ID, squad.ID, nil)
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -1247,8 +1253,8 @@ func (s *Server) claimCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
 	task, err := s.store.ClaimNextTask(r.Context(), principal.Agent.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, domain.AgentIdle); err != nil {
-				writeStorageError(w, err)
+			if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -1257,8 +1263,8 @@ func (s *Server) claimCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, domain.AgentBusy); err != nil {
-		writeStorageError(w, err)
+	if err := s.setAgentStatusAndMirror(r.Context(), principal.Agent.ID, domain.AgentBusy); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
 		return
 	}
 	s.recordAgentAudit(r, principal.Agent.ID, "task.claim", "task", task.ID, task.SquadID, nil)
@@ -1309,8 +1315,19 @@ func (s *Server) currentAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "status is invalid")
 		return
 	}
-	if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, req.Status); err != nil {
-		writeStorageError(w, err)
+	status := req.Status
+	if status == domain.AgentIdle {
+		pending, err := s.agentHasPendingWork(r.Context(), principal.Agent.ID)
+		if err != nil {
+			writeStorageError(w, err)
+			return
+		}
+		if pending {
+			status = domain.AgentBusy
+		}
+	}
+	if err := s.setAgentStatusAndMirror(r.Context(), principal.Agent.ID, status); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
 		return
 	}
 	agent, err := s.store.GetAgent(r.Context(), principal.Agent.ID)
@@ -1338,8 +1355,13 @@ func (s *Server) setCurrentAgentTaskStatus(w http.ResponseWriter, r *http.Reques
 		writeStorageError(w, err)
 		return
 	}
-	if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, agentStatus); err != nil {
-		writeStorageError(w, err)
+	if agentStatus == domain.AgentIdle {
+		if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
+			return
+		}
+	} else if err := s.setAgentStatusAndMirror(r.Context(), principal.Agent.ID, agentStatus); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
 		return
 	}
 	s.recordAgentAudit(r, principal.Agent.ID, action, "task", updated.ID, updated.SquadID, nil)
@@ -1359,6 +1381,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	previousAssignee := task.AssigneeAgentID
 	var req struct {
 		Title           *string `json:"title"`
 		Description     *string `json:"description"`
@@ -1398,6 +1421,10 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
+	if err := s.syncAffectedAgentsFromTaskChange(r.Context(), previousAssignee, updated.AssigneeAgentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update assigned agent state")
+		return
+	}
 	s.recordUserAudit(r, "task.update", "task", updated.ID, updated.SquadID, nil)
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -1417,10 +1444,15 @@ func (s *Server) moveTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "status is invalid")
 		return
 	}
+	previousAssignee := task.AssigneeAgentID
 	task.Status = req.Status
 	updated, err := s.store.UpdateTask(r.Context(), task)
 	if err != nil {
 		writeStorageError(w, err)
+		return
+	}
+	if err := s.syncAffectedAgentsFromTaskChange(r.Context(), previousAssignee, updated.AssigneeAgentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update assigned agent state")
 		return
 	}
 	s.recordUserAudit(r, "task.move", "task", updated.ID, updated.SquadID, nil)
@@ -1435,6 +1467,12 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteTask(r.Context(), task.ID); err != nil {
 		writeStorageError(w, err)
 		return
+	}
+	if task.AssigneeAgentID != "" {
+		if err := s.syncAgentStatusFromPendingWork(r.Context(), task.AssigneeAgentID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to update assigned agent state")
+			return
+		}
 	}
 	s.recordUserAudit(r, "task.delete", "task", task.ID, task.SquadID, nil)
 	w.WriteHeader(http.StatusNoContent)
@@ -1633,6 +1671,55 @@ func (s *Server) upsertAgentCR(ctx context.Context, agent *domain.Agent) error {
 		return err
 	}
 	return s.crWriter.UpsertAgent(ctx, agent, identity)
+}
+
+func (s *Server) syncAffectedAgentsFromTaskChange(ctx context.Context, beforeAgentID, afterAgentID string) error {
+	if beforeAgentID != "" {
+		if err := s.syncAgentStatusFromPendingWork(ctx, beforeAgentID); err != nil {
+			return err
+		}
+	}
+	if afterAgentID != "" && afterAgentID != beforeAgentID {
+		if err := s.syncAgentStatusFromPendingWork(ctx, afterAgentID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) syncAgentStatusFromPendingWork(ctx context.Context, agentID string) error {
+	pending, err := s.agentHasPendingWork(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	if pending {
+		return s.setAgentStatusAndMirror(ctx, agentID, domain.AgentBusy)
+	}
+	return s.setAgentStatusAndMirror(ctx, agentID, domain.AgentIdle)
+}
+
+func (s *Server) agentHasPendingWork(ctx context.Context, agentID string) (bool, error) {
+	tasks, err := s.store.ListAgentTasks(ctx, agentID)
+	if err != nil {
+		return false, err
+	}
+	for _, task := range tasks {
+		if task.Status == domain.TaskTodo || task.Status == domain.TaskInProgress {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Server) setAgentStatusAndMirror(ctx context.Context, agentID string, status domain.AgentStatus) error {
+	if err := s.store.SetAgentStatus(ctx, agentID, status); err != nil {
+		return err
+	}
+	agent, err := s.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	return s.upsertAgentCR(ctx, agent)
 }
 
 func auditLimit(r *http.Request) int {

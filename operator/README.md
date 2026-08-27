@@ -35,6 +35,5 @@ operator/
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
   and Deployment
 
-Next slices are operator scale-up from pending assigned tasks, configurable
-egress policy generation from registry grants, and stronger credential Secret
-material generation.
+Next slices are idle-timeout-aware operator scale-down and configurable egress
+policy generation from registry grants.

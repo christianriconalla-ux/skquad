@@ -77,6 +77,8 @@ Implemented slice:
 - Platform-admin authorization for registry writes
 - Agent credential auth for runtime endpoints using one-way credential verifier
   hashes, with credential-ref matching retained only for old rows without hashes
+- Assigned `todo`/`in-progress` task state mirrored into the `Agent` CR so the
+  operator can scale an agent up or keep it warm while work remains
 
-Next slices are the full runtime task execution loop and operator scale-up from
-pending assigned tasks.
+Next slices are the full runtime task execution loop and idle-timeout-aware
+operator scale-down.
