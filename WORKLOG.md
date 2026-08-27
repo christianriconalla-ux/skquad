@@ -349,3 +349,10 @@
 - files changed: `README.md`, `docs/ci-cd.md`, `docs/web-app-ux.md`, `web/README.md`, `web/src/app/globals.css`, `web/src/app/page.tsx`, `web/src/lib/api.ts`, `WORKLOG.md`.
 - command/test run: `npm run lint` and `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`.
 - result: Added typed browser API mutation helpers and replaced the remaining squad/agent/task placeholders with first-pass operational workflows. The web app can now create squads, update squad mission text, add agents, create/rotate agent identities, view selected agent chat history, enqueue consult messages, create tasks, move tasks across Kanban statuses, reassign tasks, and delete tasks. Docs now distinguish implemented web workflows from remaining registry/grants/metering/audit/admin work.
+
+## 2026-08-28 00:58:00 ACST
+
+- objective: Implement first-pass registry, grants, and admin UI workflows.
+- files changed: `README.md`, `docs/ci-cd.md`, `docs/web-app-ux.md`, `web/README.md`, `web/src/app/globals.css`, `web/src/app/page.tsx`, `web/src/lib/api.ts`, `WORKLOG.md`.
+- command/test run: `npm run lint` and `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`.
+- result: Added web UI for loading registry catalogs, registering/deprecating LLM providers and generic registry resources, granting/revoking registry resources for the selected agent, creating/revoking squad access grants, and showing platform audit plus metering summary in the admin view. Docs now describe the implemented first-pass registry/grant/admin surfaces and remaining richer UX work.

@@ -407,6 +407,18 @@ tr:last-child td {
   font-weight: 700;
 }
 
+.nested-form,
+.stack-list,
+.admin-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.panel-title {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
 .selected-row {
   background: var(--accent-soft);
 }

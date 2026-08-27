@@ -1,7 +1,7 @@
 # skquad — Web App & UX Design
 
-> **Status:** Draft v1; first-pass squad, agent, task, identity, and chat
-> workflows are implemented in the current web app.
+> **Status:** Draft v1; first-pass squad, agent, task, registry, grant, admin,
+> identity, and chat workflows are implemented in the current web app.
 >
 > The web app is a **SPA** (React / Next.js) — the primary interface for users.
 > It is optimised for **simplicity**: the onboarding path is a few clicks, and
@@ -94,8 +94,9 @@ drop, and live updates remain follow-up work.
 - **Chat** — open a 1:1 chat with the agent.
 
 Current implementation: users can create agents, create/rotate their identities,
-select an agent, view queued chat history, and enqueue consult messages. Resource
-permission management and metering panels remain follow-up work.
+select an agent, view queued chat history, enqueue consult messages, and manage
+the selected agent's registry resource permissions. Per-agent metering panels
+remain follow-up work.
 
 ### 4.3 Chat (secondary)
 - A 1:1 conversation with an agent (ad-hoc questions / steering).
@@ -123,9 +124,16 @@ permission management and metering panels remain follow-up work.
 - **Deprecate** a resource.
 - For LLM providers: models + per-token pricing.
 
+Current implementation: platform admins can register and deprecate LLM providers
+and generic registry resources, and squad owners can grant/revoke selected
+registry resources to the selected agent.
+
 ### 4.7 Audit (admin / owner)
 - Queryable log: filter by actor, squad, action, time range.
 - Shows who did what (user + agent actions).
+
+Current implementation: the admin screen loads platform audit and metering
+summary endpoints when the current user has access.
 
 ### 4.8 Admin / Settings (platform admin)
 - Platform config (OIDC, defaults, idle timeout, observability toggle).

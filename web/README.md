@@ -22,14 +22,18 @@ web/
   bearer auth through a locally stored token field.
 - Uses `NEXT_PUBLIC_SKQUAD_API_BASE_URL` for browser API calls. The Helm chart
   defaults this to `/api/v1`, matching the chart ingress path split.
-- Loads `/auth/me`, `/squads`, squad agents, squad boards, and selected agent
-  chat history, with bounded loading, empty, and error states.
+- Loads `/auth/me`, `/squads`, squad agents, squad boards, registry catalogs,
+  selected agent permissions, squad access grants, selected agent chat history,
+  platform metering summary, and platform audit with bounded loading, empty, and
+  error states.
 - Supports first-pass operational workflows for creating squads, updating squad
   mission text, adding agents, creating/rotating agent identities, creating
   tasks, moving tasks across Kanban statuses, reassigning tasks, deleting tasks,
-  and enqueueing user-to-agent consult messages.
-- Keeps registry, grants, metering, audit, and deeper admin workflows as
-  follow-up screens.
+  enqueueing user-to-agent consult messages, registering/deprecating registry
+  entries, granting/revoking agent resource permissions, and creating/revoking
+  squad access grants.
+- Keeps richer visualizations, guided onboarding, drag and drop, live updates,
+  and user-management settings as follow-up screens.
 
 ## Verification
 

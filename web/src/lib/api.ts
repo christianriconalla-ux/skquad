@@ -82,6 +82,72 @@ export type Message = {
   delivered_at?: string;
 };
 
+export type ResourceType = "llm_provider" | "skill" | "tool" | "api" | "knowledge_base" | "project_workspace";
+
+export type LLMProvider = {
+  id: string;
+  name: string;
+  kind: string;
+  base_url: string;
+  api_key_ref?: string;
+  default_model?: string;
+  models?: unknown;
+  pricing?: unknown;
+  status: string;
+  registered_by?: string;
+  created_at?: string;
+};
+
+export type RegistryResource = {
+  id: string;
+  type: ResourceType;
+  name: string;
+  description?: string;
+  endpoint?: string;
+  auth_ref?: string;
+  manifest?: unknown;
+  status: string;
+  registered_by?: string;
+  created_at?: string;
+};
+
+export type AgentPermission = {
+  id: string;
+  agent_id: string;
+  resource_type: ResourceType;
+  resource_id: string;
+  granted_by?: string;
+  created_at?: string;
+};
+
+export type AccessGrant = {
+  id: string;
+  squad_id: string;
+  grantee_type: "user" | "agent";
+  grantee_id: string;
+  permissions: string;
+  granted_by?: string;
+  created_at?: string;
+};
+
+export type MeteringSummary = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cost?: number;
+  currency?: string;
+};
+
+export type AuditEntry = {
+  id: string;
+  actor_type: string;
+  actor_id: string;
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  squad_id?: string;
+  timestamp?: string;
+};
+
 export type ApiState<T> = {
   data: T | null;
   loading: boolean;
@@ -112,6 +178,10 @@ export async function apiPost<T>(path: string, token: string, body: unknown): Pr
 
 export async function apiPatch<T>(path: string, token: string, body: unknown): Promise<T> {
   return apiRequest<T>(path, token, { method: "PATCH", body });
+}
+
+export async function apiPut<T>(path: string, token: string, body: unknown): Promise<T> {
+  return apiRequest<T>(path, token, { method: "PUT", body });
 }
 
 export async function apiDelete(path: string, token: string): Promise<void> {
