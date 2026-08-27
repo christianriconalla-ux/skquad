@@ -103,8 +103,10 @@ type AgentMemoryStore interface {
 type MessageStore interface {
 	CreateMessage(ctx context.Context, m *domain.Message) (*domain.Message, error)
 	ListPendingMessages(ctx context.Context, agentID string) ([]*domain.Message, error)
+	HasPendingMessages(ctx context.Context, agentID string) (bool, error)
 	ListAgentMessageHistory(ctx context.Context, agentID string) ([]*domain.Message, error)
 	AckMessage(ctx context.Context, agentID string, messageID string) (*domain.Message, error)
+	FailMessage(ctx context.Context, agentID string, messageID string, reason string) (*domain.Message, error)
 }
 
 // RegistryStore persists registry resources (LLM providers + generic resources).

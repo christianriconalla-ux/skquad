@@ -221,9 +221,10 @@ messages and acknowledge each message after an injected handler succeeds. The
 default runtime loop handles a bounded inbox batch and then at most one task per
 iteration, so a hot inbox and a hot task queue cannot starve each other. The
 default message handler acknowledges simple `ping`, `reply`, and `consult`
-delivery; unsupported `delegate`/`handoff` messages and handler failures are
-left pending for at-least-once retry. Durable failure counters and automatic
-dead-letter transitions remain follow-up control-plane work.
+delivery; unsupported `delegate`/`handoff` messages and handler exceptions are
+reported through `/api/v1/agents/me/messages/:id/fail`, which lets the control
+plane increment attempts, schedule retry, expire stale messages, or dead-letter
+messages that exhaust their retry budget.
 
 ---
 

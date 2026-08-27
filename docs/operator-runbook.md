@@ -279,9 +279,9 @@ kubectl --namespace squad-<id> get deploy <agent-cr-name> \
   -o jsonpath='{.spec.replicas}{"\n"}'
 ```
 
-Current boundary: the message queue still needs retry limits and dead-letter
-state. Unsupported pending message types can keep an agent active until that
-follow-up lands.
+Current boundary: unsupported `delegate`/`handoff` messages are retried and then
+dead-lettered unless a specialized handler is installed. Automatic task
+materialization for those message types is still a follow-up workflow slice.
 
 ### Runtime Readiness
 

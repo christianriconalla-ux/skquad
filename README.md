@@ -97,7 +97,8 @@ Important gaps remain:
 - automatic LiteLLM key refresh or revocation after permission changes is not
   implemented;
 - semantic vector memory and durable artifact storage are planned;
-- message retry/dead-letter handling needs further work; and
+- automatic task materialization for `delegate`/`handoff` messages is planned;
+  and
 - production ingress, TLS, external-database operations, observability, and
   network-policy hardening are not complete.
 

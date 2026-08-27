@@ -1109,6 +1109,117 @@ func TestAgentMessagingInboxFlow(t *testing.T) {
 	require.Contains(t, auditActions(audit), "message.ack")
 }
 
+func TestAgentMessageFailuresRetryThenDeadLetter(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Message Retry Squad",
+	}, http.StatusCreated, &squad)
+	var sender domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Sender",
+	}, http.StatusCreated, &sender)
+	var recipient domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Recipient",
+	}, http.StatusCreated, &recipient)
+
+	var senderIdentity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+sender.ID+"/identity", nil, http.StatusCreated, &senderIdentity)
+	senderCredential := crWriter.credentialTokens[senderIdentity.CredentialRef]
+	var recipientIdentity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+recipient.ID+"/identity", nil, http.StatusCreated, &recipientIdentity)
+	recipientCredential := crWriter.credentialTokens[recipientIdentity.CredentialRef]
+
+	var sent domain.Message
+	doAgentJSON(t, handler, sender.ID, senderCredential, http.MethodPost, "/api/v1/agents/me/messages", map[string]any{
+		"to_agent_id":  recipient.ID,
+		"type":         "handoff",
+		"message":      "unsupported for now",
+		"max_attempts": 2,
+	}, http.StatusCreated, &sent)
+	require.Equal(t, 2, sent.MaxAttempts)
+
+	var failed domain.Message
+	doAgentJSON(t, handler, recipient.ID, recipientCredential, http.MethodPost, "/api/v1/agents/me/messages/"+sent.ID+"/fail", map[string]any{
+		"reason": "unsupported handoff",
+	}, http.StatusOK, &failed)
+	require.Equal(t, domain.MessagePending, failed.Status)
+	require.Equal(t, 1, failed.Attempts)
+	require.True(t, failed.NextRetryAt.After(time.Now().UTC()))
+
+	var inbox []domain.Message
+	doAgentJSON(t, handler, recipient.ID, recipientCredential, http.MethodGet, "/api/v1/agents/me/messages", nil, http.StatusOK, &inbox)
+	require.Empty(t, inbox)
+
+	var recipientState domain.Agent
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+recipient.ID, nil, http.StatusOK, &recipientState)
+	require.Equal(t, domain.AgentBusy, recipientState.Status)
+
+	var dead domain.Message
+	doAgentJSON(t, handler, recipient.ID, recipientCredential, http.MethodPost, "/api/v1/agents/me/messages/"+sent.ID+"/fail", map[string]any{
+		"reason": "unsupported handoff",
+	}, http.StatusOK, &dead)
+	require.Equal(t, domain.MessageDead, dead.Status)
+	require.Equal(t, 2, dead.Attempts)
+	require.Contains(t, dead.TerminalReason, "unsupported handoff")
+
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+recipient.ID, nil, http.StatusOK, &recipientState)
+	require.Equal(t, domain.AgentIdle, recipientState.Status)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "message.fail")
+}
+
+func TestExpiredAgentMessagesDoNotKeepAgentBusy(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Message Expiry Squad",
+	}, http.StatusCreated, &squad)
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Agent",
+	}, http.StatusCreated, &agent)
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+
+	var sent domain.Message
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/chat", map[string]any{
+		"message":     "short lived",
+		"ttl_seconds": 1,
+	}, http.StatusCreated, &sent)
+	require.Equal(t, domain.MessagePending, sent.Status)
+
+	time.Sleep(1100 * time.Millisecond)
+
+	var inbox []domain.Message
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodGet, "/api/v1/agents/me/messages", nil, http.StatusOK, &inbox)
+	require.Empty(t, inbox)
+
+	var updated domain.Agent
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/heartbeat", map[string]any{
+		"status": "idle",
+	}, http.StatusOK, &updated)
+	require.Equal(t, domain.AgentIdle, updated.Status)
+
+	var history []domain.Message
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID+"/chat", nil, http.StatusOK, &history)
+	require.Len(t, history, 1)
+	require.Equal(t, domain.MessageExpired, history[0].Status)
+	require.NotEmpty(t, history[0].TerminalReason)
+}
+
 func TestAgentCrossSquadMessageRequiresGrant(t *testing.T) {
 	t.Parallel()
 

@@ -59,6 +59,7 @@ agent-runtime/
   task-result and optional per-agent memory persistence.
 - Provides the `skquad-agent-runtime` console script.
 
-Automatic registry package installation, semantic memory search, persistent
-message failure counts/dead-lettering, and artifact persistence are still
-upcoming slices.
+Automatic registry package installation, semantic memory search, and artifact
+persistence are still upcoming slices. Inbox handler failures are reported back
+to the control plane so messages can retry, expire, or move to the dead-letter
+state.

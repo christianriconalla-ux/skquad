@@ -13,6 +13,13 @@ import (
 	"github.com/rossbrigoli/skquad/control-plane/internal/domain"
 )
 
+const (
+	defaultMessageMaxAttempts = 3
+	defaultMessageRetryDelay  = 30 * time.Second
+	defaultMessageTTL         = 24 * time.Hour
+	maxMessageTerminalReason  = 500
+)
+
 // MemoryStore is a process-local store used for development and handler tests.
 // It is intentionally simple; production persistence belongs in the Postgres
 // implementation.
@@ -1194,6 +1201,7 @@ func (m *MemoryStore) ListKubernetesOutbox(_ context.Context, status domain.Kube
 func (m *MemoryStore) CreateMessage(_ context.Context, msg *domain.Message) (*domain.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now().UTC()
 	target, ok := m.agents[msg.ToAgentID]
 	if !ok {
 		return nil, ErrNotFound
@@ -1210,20 +1218,31 @@ func (m *MemoryStore) CreateMessage(_ context.Context, msg *domain.Message) (*do
 	if created.Status == "" {
 		created.Status = domain.MessagePending
 	}
-	created.CreatedAt = time.Now().UTC()
+	if created.MaxAttempts <= 0 {
+		created.MaxAttempts = defaultMessageMaxAttempts
+	}
+	if created.NextRetryAt.IsZero() {
+		created.NextRetryAt = now
+	}
+	if created.ExpiresAt.IsZero() {
+		created.ExpiresAt = now.Add(defaultMessageTTL)
+	}
+	created.CreatedAt = now
 	m.messages[created.ID] = created
 	return cloneMessage(created), nil
 }
 
 func (m *MemoryStore) ListPendingMessages(_ context.Context, agentID string) ([]*domain.Message, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, ok := m.agents[agentID]; !ok {
 		return nil, ErrNotFound
 	}
+	now := time.Now().UTC()
 	out := []*domain.Message{}
 	for _, msg := range m.messages {
-		if msg.ToAgentID == agentID && msg.Status == domain.MessagePending {
+		expireMessageIfDue(msg, now)
+		if msg.ToAgentID == agentID && msg.Status == domain.MessagePending && !msg.NextRetryAt.After(now) {
 			out = append(out, cloneMessage(msg))
 		}
 	}
@@ -1231,14 +1250,32 @@ func (m *MemoryStore) ListPendingMessages(_ context.Context, agentID string) ([]
 	return out, nil
 }
 
+func (m *MemoryStore) HasPendingMessages(_ context.Context, agentID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return false, ErrNotFound
+	}
+	now := time.Now().UTC()
+	for _, msg := range m.messages {
+		expireMessageIfDue(msg, now)
+		if msg.ToAgentID == agentID && msg.Status == domain.MessagePending {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *MemoryStore) ListAgentMessageHistory(_ context.Context, agentID string) ([]*domain.Message, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, ok := m.agents[agentID]; !ok {
 		return nil, ErrNotFound
 	}
+	now := time.Now().UTC()
 	out := []*domain.Message{}
 	for _, msg := range m.messages {
+		expireMessageIfDue(msg, now)
 		if msg.ToAgentID == agentID {
 			out = append(out, cloneMessage(msg))
 		}
@@ -1258,6 +1295,35 @@ func (m *MemoryStore) AckMessage(_ context.Context, agentID string, messageID st
 		msg.Status = domain.MessageDelivered
 		msg.DeliveredAt = time.Now().UTC()
 	}
+	return cloneMessage(msg), nil
+}
+
+func (m *MemoryStore) FailMessage(_ context.Context, agentID string, messageID string, reason string) (*domain.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	msg, ok := m.messages[messageID]
+	if !ok || msg.ToAgentID != agentID {
+		return nil, ErrNotFound
+	}
+	now := time.Now().UTC()
+	expireMessageIfDue(msg, now)
+	if msg.Status != domain.MessagePending {
+		return cloneMessage(msg), nil
+	}
+	msg.Attempts++
+	if msg.MaxAttempts <= 0 {
+		msg.MaxAttempts = defaultMessageMaxAttempts
+	}
+	if msg.Attempts >= msg.MaxAttempts {
+		msg.Status = domain.MessageDead
+		msg.DeliveredAt = now
+		msg.TerminalReason = trimMessageReason(reason)
+		if msg.TerminalReason == "" {
+			msg.TerminalReason = "retry attempts exhausted"
+		}
+		return cloneMessage(msg), nil
+	}
+	msg.NextRetryAt = now.Add(defaultMessageRetryDelay)
 	return cloneMessage(msg), nil
 }
 
@@ -1378,6 +1444,25 @@ func cloneMessage(m *domain.Message) *domain.Message {
 	v := *m
 	v.Payload = append([]byte(nil), m.Payload...)
 	return &v
+}
+
+func expireMessageIfDue(msg *domain.Message, now time.Time) {
+	if msg == nil || msg.Status != domain.MessagePending || msg.ExpiresAt.IsZero() || msg.ExpiresAt.After(now) {
+		return
+	}
+	msg.Status = domain.MessageExpired
+	msg.DeliveredAt = now
+	if msg.TerminalReason == "" {
+		msg.TerminalReason = "message expired before delivery"
+	}
+}
+
+func trimMessageReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > maxMessageTerminalReason {
+		return reason[:maxMessageTerminalReason]
+	}
+	return reason
 }
 
 func cloneGrant(g *domain.AccessGrant) *domain.AccessGrant {

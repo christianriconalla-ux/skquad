@@ -146,15 +146,17 @@ completing the same task after a lease has moved on.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/agents/me/messages` | Send a message (`{ to_agent_id, type, payload }`). |
-| `GET` | `/api/v1/agents/me/messages` | Get this agent's inbox (pending). |
+| `POST` | `/api/v1/agents/me/messages` | Send a message (`{ to_agent_id, type, payload, max_attempts?, ttl_seconds? }`). |
+| `GET` | `/api/v1/agents/me/messages` | Get this agent's retry-due pending inbox. |
 | `POST` | `/api/v1/agents/me/messages/:id/ack` | Acknowledge a delivered message. |
+| `POST` | `/api/v1/agents/me/messages/:id/fail` | Report handler failure; schedules retry or dead-letters after attempts expire. |
 
 - **Cross-squad** messages are rejected (and audited) without an access grant.
 - **Delegation / handoff** create a task on the target board + a ping.
 
-Current implementation covers durable message enqueue, pending inbox list,
-acknowledgement, audit, and pending-message wake signals. Automatic task
+Current implementation covers durable message enqueue, retry-due inbox list,
+acknowledgement, failure reporting, retry scheduling, TTL expiry,
+dead-lettering, audit, and pending-message wake signals. Automatic task
 creation for `delegate`/`handoff` is tracked as a later workflow slice.
 
 ---

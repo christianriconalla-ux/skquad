@@ -1432,23 +1432,36 @@ func (p *PostgresStore) ListKubernetesOutbox(ctx context.Context, status domain.
 }
 
 func (p *PostgresStore) CreateMessage(ctx context.Context, m *domain.Message) (*domain.Message, error) {
+	maxAttempts := m.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = defaultMessageMaxAttempts
+	}
+	expiresAt := m.ExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().UTC().Add(defaultMessageTTL)
+	}
 	row := p.pool.QueryRow(ctx, `
 		INSERT INTO messages (
-			from_type, from_id, to_agent_id, squad_id, type, payload, status, correlation_id
+			from_type, from_id, to_agent_id, squad_id, type, payload, status, correlation_id, max_attempts, expires_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid, $9, $10)
 		RETURNING id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
-		          type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
-	`, m.FromType, m.FromID, m.ToAgentID, m.SquadID, defaultMessageType(m.Type), defaultJSON(m.Payload, "{}"), defaultMessageStatus(m.Status), m.CorrelationID)
+		          type, payload, status, coalesce(correlation_id::text, ''), attempts, max_attempts,
+		          next_retry_at, expires_at, terminal_reason, created_at, delivered_at
+	`, m.FromType, m.FromID, m.ToAgentID, m.SquadID, defaultMessageType(m.Type), defaultJSON(m.Payload, "{}"), defaultMessageStatus(m.Status), m.CorrelationID, maxAttempts, expiresAt)
 	return scanMessage(row)
 }
 
 func (p *PostgresStore) ListPendingMessages(ctx context.Context, agentID string) ([]*domain.Message, error) {
+	if err := p.expireMessagesForAgent(ctx, agentID); err != nil {
+		return nil, err
+	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
-		       type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
+		       type, payload, status, coalesce(correlation_id::text, ''), attempts, max_attempts,
+		       next_retry_at, expires_at, terminal_reason, created_at, delivered_at
 		FROM messages
-		WHERE to_agent_id = $1 AND status = $2
+		WHERE to_agent_id = $1 AND status = $2 AND next_retry_at <= now()
 		ORDER BY created_at, id
 	`, agentID, domain.MessagePending)
 	if err != nil {
@@ -1458,10 +1471,27 @@ func (p *PostgresStore) ListPendingMessages(ctx context.Context, agentID string)
 	return scanMessages(rows)
 }
 
+func (p *PostgresStore) HasPendingMessages(ctx context.Context, agentID string) (bool, error) {
+	if err := p.expireMessagesForAgent(ctx, agentID); err != nil {
+		return false, err
+	}
+	var exists bool
+	err := p.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM messages WHERE to_agent_id = $1 AND status = $2
+		)
+	`, agentID, domain.MessagePending).Scan(&exists)
+	return exists, mapPgErr(err)
+}
+
 func (p *PostgresStore) ListAgentMessageHistory(ctx context.Context, agentID string) ([]*domain.Message, error) {
+	if err := p.expireMessagesForAgent(ctx, agentID); err != nil {
+		return nil, err
+	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
-		       type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
+		       type, payload, status, coalesce(correlation_id::text, ''), attempts, max_attempts,
+		       next_retry_at, expires_at, terminal_reason, created_at, delivered_at
 		FROM messages
 		WHERE to_agent_id = $1
 		ORDER BY created_at, id
@@ -1480,9 +1510,51 @@ func (p *PostgresStore) AckMessage(ctx context.Context, agentID string, messageI
 		    delivered_at = CASE WHEN status = $3 AND delivered_at IS NULL THEN now() ELSE delivered_at END
 		WHERE id = $1 AND to_agent_id = $2
 		RETURNING id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
-		          type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
+		          type, payload, status, coalesce(correlation_id::text, ''), attempts, max_attempts,
+		          next_retry_at, expires_at, terminal_reason, created_at, delivered_at
 	`, messageID, agentID, domain.MessagePending, domain.MessageDelivered)
 	return scanMessage(row)
+}
+
+func (p *PostgresStore) FailMessage(ctx context.Context, agentID string, messageID string, reason string) (*domain.Message, error) {
+	row := p.pool.QueryRow(ctx, `
+		UPDATE messages
+		SET attempts = CASE WHEN status = $3 THEN attempts + 1 ELSE attempts END,
+		    status = CASE
+		        WHEN status <> $3 THEN status
+		        WHEN expires_at <= now() THEN $4
+		        WHEN attempts + 1 >= max_attempts THEN $5
+		        ELSE status
+		    END,
+		    next_retry_at = CASE
+		        WHEN status = $3 AND attempts + 1 < max_attempts AND expires_at > now() THEN now() + $6::interval
+		        ELSE next_retry_at
+		    END,
+		    terminal_reason = CASE
+		        WHEN status = $3 AND (attempts + 1 >= max_attempts OR expires_at <= now()) THEN left($7, $8)
+		        ELSE terminal_reason
+		    END,
+		    delivered_at = CASE
+		        WHEN status = $3 AND (attempts + 1 >= max_attempts OR expires_at <= now()) THEN now()
+		        ELSE delivered_at
+		    END
+		WHERE id = $1 AND to_agent_id = $2
+		RETURNING id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
+		          type, payload, status, coalesce(correlation_id::text, ''), attempts, max_attempts,
+		          next_retry_at, expires_at, terminal_reason, created_at, delivered_at
+	`, messageID, agentID, domain.MessagePending, domain.MessageExpired, domain.MessageDead, defaultMessageRetryDelay, trimMessageReason(reason), maxMessageTerminalReason)
+	return scanMessage(row)
+}
+
+func (p *PostgresStore) expireMessagesForAgent(ctx context.Context, agentID string) error {
+	_, err := p.pool.Exec(ctx, `
+		UPDATE messages
+		SET status = $2,
+		    terminal_reason = CASE WHEN terminal_reason = '' THEN 'message expired before delivery' ELSE terminal_reason END,
+		    delivered_at = CASE WHEN delivered_at IS NULL THEN now() ELSE delivered_at END
+		WHERE to_agent_id = $1 AND status = $3 AND expires_at <= now()
+	`, agentID, domain.MessageExpired, domain.MessagePending)
+	return mapPgErr(err)
 }
 
 type scanner interface {
@@ -1758,6 +1830,11 @@ func scanMessage(row scanner) (*domain.Message, error) {
 		&msg.Payload,
 		&msg.Status,
 		&msg.CorrelationID,
+		&msg.Attempts,
+		&msg.MaxAttempts,
+		&msg.NextRetryAt,
+		&msg.ExpiresAt,
+		&msg.TerminalReason,
 		&msg.CreatedAt,
 		&deliveredAt,
 	); err != nil {

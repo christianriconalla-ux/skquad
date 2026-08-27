@@ -65,7 +65,7 @@ Implemented slice:
 - Agent registry permission list/set endpoints
 - Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
   granted active resource discovery, task start/fenced complete/block, queued
-  message send/list/ack, and status heartbeats
+  message send/retry-due list/ack/fail, and status heartbeats
 - User-facing agent chat endpoints that enqueue durable messages for owned or
   granted agents
 - Board retrieval and task create/update/move/delete

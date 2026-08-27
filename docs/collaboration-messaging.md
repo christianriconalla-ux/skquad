@@ -8,8 +8,9 @@
 > messaging is **queued**, so a **busy agent is not disturbed** (protecting its
 > task context).
 >
-> The queue and runtime inbox path are implemented. Retry scheduling,
-> dead-lettering, and non-lossy consult/reply behavior remain tracked follow-up
+> The queue, runtime inbox path, retry scheduling, expiry, and dead-letter
+> transitions are implemented. Automatic `delegate`/`handoff` task
+> materialization and richer consult/reply workflows remain tracked follow-up
 > work; see [`implementation-status.md`](implementation-status.md).
 
 ---
@@ -151,11 +152,12 @@ Agent idle → check inbox
 - This is how a **cross-squad handoff** wakes a sleeping agent.
 
 Current implementation note: the control plane mirrors pending inbox messages
-into the target Agent CR activity signal. The runtime now fetches pending inbox
+into the target Agent CR activity signal. The runtime fetches retry-due inbox
 messages, invokes an injected handler, acknowledges messages after successful
-handling, and leaves failed messages pending for at-least-once retry. Automatic
-delegate/handoff task materialization and durable failure-count/dead-letter
-transitions remain follow-up slices.
+handling, and reports handler failures so the control plane can increment
+attempts, schedule the next retry, expire stale messages, or dead-letter
+messages whose retry budget is exhausted. Automatic delegate/handoff task
+materialization remains a follow-up slice.
 
 ---
 
@@ -179,10 +181,10 @@ transitions remain follow-up slices.
   recipient acknowledges; on crash, it is re-delivered (idempotent handling).
 - **Idempotent handling** — agents handle a message idempotently (e.g. by
   `correlation_id` / message id) to avoid duplicate work.
-- **Dead-letter** — the schema has a `dead` status, but automatic transition
-  after repeated failures is not implemented yet. Current runtime behavior is
-  retry-by-not-acknowledging, so failed messages remain pending and continue to
-  wake the target agent until a future dead-letter policy is added.
+- **Retry and dead-letter** — failed handler attempts remain `pending` but are
+  hidden from the runtime until `next_retry_at`; after `max_attempts` they move
+  to `dead` with `terminal_reason`. Expired messages move to `expired` and no
+  longer wake the target agent.
 - **No lost messages** — the Postgres-backed queue is durable.
 
 ---

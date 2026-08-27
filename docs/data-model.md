@@ -272,18 +272,25 @@ CREATE TABLE messages (
     status        text NOT NULL DEFAULT 'pending'
                   CHECK (status IN ('pending','delivered','expired','dead')),
     correlation_id uuid,                -- links a reply to its consult
+    attempts      integer NOT NULL DEFAULT 0,
+    max_attempts  integer NOT NULL DEFAULT 3,
+    next_retry_at timestamptz NOT NULL DEFAULT now(),
     ttl           interval,
+    expires_at    timestamptz NOT NULL DEFAULT now() + interval '24 hours',
+    terminal_reason text NOT NULL DEFAULT '',
     created_at    timestamptz NOT NULL DEFAULT now(),
     delivered_at  timestamptz
 );
 CREATE INDEX idx_messages_inbox ON messages(to_agent_id, status, created_at)
     WHERE status = 'pending';
+CREATE INDEX idx_messages_retry ON messages(to_agent_id, status, next_retry_at)
+    WHERE status = 'pending';
 CREATE INDEX idx_messages_squad ON messages(squad_id, created_at);
 ```
 
 Current implementation note: the embedded migration creates this durable inbox
-schema, but message enqueue/claim/ack APIs are still tracked as a follow-up
-implementation slice.
+schema, and the control plane exposes enqueue, retry-due inbox listing,
+acknowledgement, failure reporting, expiry, and dead-letter transitions.
 
 ---
 

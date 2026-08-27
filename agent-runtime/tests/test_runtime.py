@@ -294,11 +294,21 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(context.memory[0].content, "remember this")
         self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/tasks/task-1/context")
 
-    def test_control_plane_client_lists_and_acks_messages(self):
+    def test_control_plane_client_lists_acks_and_fails_messages(self):
         calls = []
 
         def opener(req):
             calls.append(req)
+            if req.full_url.endswith("/fail"):
+                body = json.loads(req.data.decode("utf-8"))
+                self.assertEqual(body["reason"], "unsupported")
+                return FakeResponse(
+                    200,
+                    b'{"id":"message-1","from_type":"agent","from_id":"agent-0",'
+                    b'"to_agent_id":"agent-1","squad_id":"squad-1","type":"ping",'
+                    b'"payload":{},"status":"pending","correlation_id":"","attempts":1,'
+                    b'"max_attempts":3,"next_retry_at":"2026-08-28T02:00:30Z"}',
+                )
             if req.full_url.endswith("/ack"):
                 return FakeResponse(
                     200,
@@ -317,12 +327,15 @@ class RuntimeBootstrapTest(unittest.TestCase):
 
         messages = client.list_messages()
         acked = client.ack_message("message-1")
+        failed = client.fail_message("message-1", "unsupported")
 
         self.assertEqual(messages[0].message_type, "ping")
         self.assertEqual(messages[0].payload["message"], "wake up")
         self.assertEqual(acked.status, "delivered")
+        self.assertEqual(failed.attempts, 1)
         self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/messages")
         self.assertEqual(calls[1].full_url, "http://control-plane/api/v1/agents/me/messages/message-1/ack")
+        self.assertEqual(calls[2].full_url, "http://control-plane/api/v1/agents/me/messages/message-1/fail")
 
     def test_poll_once_reports_idle_without_task(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -487,7 +500,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(snapshot.inbox_processed, 1)
             self.assertEqual(snapshot.inbox_failed, 1)
 
-    def test_run_inbox_once_leaves_failed_messages_pending_for_retry(self):
+    def test_run_inbox_once_reports_failed_messages_for_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = ready_config(tmp)
             client = FakeControlPlaneClient(
@@ -500,6 +513,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(result.processed, 0)
             self.assertEqual(result.failed, 1)
             self.assertEqual(client.acked_messages, [])
+            self.assertEqual(client.failed_messages, [("message-1", "message type 'handoff' requires a specialized handler")])
 
     def test_task_loop_runs_bounded_inbox_batch_and_one_task(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -954,6 +968,7 @@ class FakeControlPlaneClient:
         self.persist_memory = []
         self.blocked = []
         self.acked_messages = []
+        self.failed_messages = []
 
     def claim_task(self):
         return self.claimed_task
@@ -968,6 +983,10 @@ class FakeControlPlaneClient:
     def ack_message(self, message_id):
         self.acked_messages.append(message_id)
         return fake_message(message_id, "ping", status="delivered")
+
+    def fail_message(self, message_id, reason):
+        self.failed_messages.append((message_id, reason))
+        return fake_message(message_id, "ping", attempts=1)
 
     def complete_task(self, task, status="in-review", summary="", persist_memory=False):
         task_id = task.id if isinstance(task, RuntimeTask) else task
@@ -1132,7 +1151,7 @@ def fake_task(task_id, status="in-progress"):
     )
 
 
-def fake_message(message_id, message_type, status="pending"):
+def fake_message(message_id, message_type, status="pending", attempts=0, max_attempts=3):
     return RuntimeMessage(
         id=message_id,
         from_type="agent",
@@ -1143,6 +1162,8 @@ def fake_message(message_id, message_type, status="pending"):
         payload={"message": "hello"},
         status=status,
         correlation_id="",
+        attempts=attempts,
+        max_attempts=max_attempts,
     )
 
 

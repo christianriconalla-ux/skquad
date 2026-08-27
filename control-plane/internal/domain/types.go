@@ -247,17 +247,22 @@ const (
 
 // Message is a durable queued message for an agent inbox.
 type Message struct {
-	ID            string          `json:"id"`
-	FromType      string          `json:"from_type"` // "user" | "agent"
-	FromID        string          `json:"from_id"`
-	ToAgentID     string          `json:"to_agent_id"`
-	SquadID       string          `json:"squad_id"`
-	Type          MessageType     `json:"type"`
-	Payload       json.RawMessage `json:"payload"`
-	Status        MessageStatus   `json:"status"`
-	CorrelationID string          `json:"correlation_id,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	DeliveredAt   time.Time       `json:"delivered_at,omitempty"`
+	ID             string          `json:"id"`
+	FromType       string          `json:"from_type"` // "user" | "agent"
+	FromID         string          `json:"from_id"`
+	ToAgentID      string          `json:"to_agent_id"`
+	SquadID        string          `json:"squad_id"`
+	Type           MessageType     `json:"type"`
+	Payload        json.RawMessage `json:"payload"`
+	Status         MessageStatus   `json:"status"`
+	CorrelationID  string          `json:"correlation_id,omitempty"`
+	Attempts       int             `json:"attempts"`
+	MaxAttempts    int             `json:"max_attempts"`
+	NextRetryAt    time.Time       `json:"next_retry_at,omitempty"`
+	ExpiresAt      time.Time       `json:"expires_at,omitempty"`
+	TerminalReason string          `json:"terminal_reason,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	DeliveredAt    time.Time       `json:"delivered_at,omitempty"`
 }
 
 // Board is a squad's Kanban board (one per squad).

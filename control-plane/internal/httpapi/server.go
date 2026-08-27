@@ -131,6 +131,7 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 			r.Get("/messages", s.listCurrentAgentMessages)
 			r.Post("/messages", s.createCurrentAgentMessage)
 			r.Post("/messages/{messageID}/ack", s.ackCurrentAgentMessage)
+			r.Post("/messages/{messageID}/fail", s.failCurrentAgentMessage)
 			r.Post("/tasks/claim", s.claimCurrentAgentTask)
 			r.Get("/tasks/{taskID}/context", s.getCurrentAgentTaskContext)
 			r.Post("/tasks/{taskID}/start", s.startCurrentAgentTask)
@@ -1555,6 +1556,12 @@ type messageRequest struct {
 	Payload       json.RawMessage    `json:"payload"`
 	Message       string             `json:"message"`
 	CorrelationID string             `json:"correlation_id"`
+	MaxAttempts   int                `json:"max_attempts"`
+	TTLSeconds    int                `json:"ttl_seconds"`
+}
+
+type messageFailureRequest struct {
+	Reason string `json:"reason"`
 }
 
 func (s *Server) createCurrentAgentMessage(w http.ResponseWriter, r *http.Request) {
@@ -1604,6 +1611,8 @@ func (s *Server) createCurrentAgentMessage(w http.ResponseWriter, r *http.Reques
 		Payload:       messagePayload(req),
 		Status:        domain.MessagePending,
 		CorrelationID: strings.TrimSpace(req.CorrelationID),
+		MaxAttempts:   req.MaxAttempts,
+		ExpiresAt:     messageExpiresAt(req),
 	})
 	if err != nil {
 		writeStorageError(w, err)
@@ -1629,6 +1638,28 @@ func (s *Server) ackCurrentAgentMessage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.recordAgentAudit(r, principal.Agent.ID, "message.ack", "message", updated.ID, updated.SquadID, nil)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) failCurrentAgentMessage(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	var req messageFailureRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		req.Reason = "runtime message handler failed"
+	}
+	updated, err := s.store.FailMessage(r.Context(), principal.Agent.ID, chi.URLParam(r, "messageID"), req.Reason)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
+		return
+	}
+	s.recordAgentAudit(r, principal.Agent.ID, "message.fail", "message", updated.ID, updated.SquadID, nil)
 	writeJSON(w, http.StatusOK, updated)
 }
 
@@ -1659,6 +1690,8 @@ func (s *Server) createAgentChatMessage(w http.ResponseWriter, r *http.Request) 
 		Payload:       messagePayload(req),
 		Status:        domain.MessagePending,
 		CorrelationID: strings.TrimSpace(req.CorrelationID),
+		MaxAttempts:   req.MaxAttempts,
+		ExpiresAt:     messageExpiresAt(req),
 	})
 	if err != nil {
 		writeStorageError(w, err)
@@ -1712,6 +1745,13 @@ func messagePayload(req messageRequest) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return payload
+}
+
+func messageExpiresAt(req messageRequest) time.Time {
+	if req.TTLSeconds <= 0 {
+		return time.Time{}
+	}
+	return time.Now().UTC().Add(time.Duration(req.TTLSeconds) * time.Second)
 }
 
 type agentRuntimeResource struct {
@@ -2336,11 +2376,11 @@ func (s *Server) agentHasPendingWork(ctx context.Context, agentID string) (bool,
 			return true, nil
 		}
 	}
-	messages, err := s.store.ListPendingMessages(ctx, agentID)
+	hasMessages, err := s.store.HasPendingMessages(ctx, agentID)
 	if err != nil {
 		return false, err
 	}
-	return len(messages) > 0, nil
+	return hasMessages, nil
 }
 
 func (s *Server) setAgentStatusAndMirror(ctx context.Context, agentID string, status domain.AgentStatus) error {

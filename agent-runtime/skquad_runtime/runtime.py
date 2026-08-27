@@ -127,6 +127,11 @@ class RuntimeMessage:
     payload: Mapping[str, object]
     status: str
     correlation_id: str
+    attempts: int = 0
+    max_attempts: int = 0
+    next_retry_at: str = ""
+    expires_at: str = ""
+    terminal_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -375,6 +380,14 @@ class ControlPlaneClient:
         payload = self._json("POST", f"/api/v1/agents/me/messages/{message_id}/ack", None)
         return runtime_message(payload)
 
+    def fail_message(self, message_id: str, reason: str) -> RuntimeMessage:
+        payload = self._json(
+            "POST",
+            f"/api/v1/agents/me/messages/{message_id}/fail",
+            {"reason": reason},
+        )
+        return runtime_message(payload)
+
     def task_context(self, task_id: str) -> RuntimeTaskContext:
         payload = self._json("GET", f"/api/v1/agents/me/tasks/{task_id}/context", None)
         return runtime_task_context(payload)
@@ -529,6 +542,11 @@ def runtime_message(payload: Mapping[str, object]) -> RuntimeMessage:
         payload=message_payload,
         status=str(payload.get("status", "")),
         correlation_id=str(payload.get("correlation_id", "")),
+        attempts=int_value(payload.get("attempts")),
+        max_attempts=int_value(payload.get("max_attempts")),
+        next_retry_at=str(payload.get("next_retry_at", "")),
+        expires_at=str(payload.get("expires_at", "")),
+        terminal_reason=str(payload.get("terminal_reason", "")),
     )
 
 
@@ -890,6 +908,13 @@ def message_value(message: object, key: str) -> object | None:
     return object_value(message, key)
 
 
+def int_value(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def object_value(item: object, key: str) -> object | None:
     if isinstance(item, Mapping):
         return item.get(key)
@@ -1021,11 +1046,12 @@ def run_inbox_once(
     for message in messages[:limit]:
         try:
             result = handler.handle_message(message, config)
-        except Exception:
+        except Exception as exc:
             LOGGER.exception(
                 "agent inbox message handling failed",
                 extra={"message_id": message.id, "message_type": message.message_type},
             )
+            control_plane.fail_message(message.id, f"handler exception: {exc}")
             failed += 1
             continue
         if result.ok:
@@ -1036,6 +1062,7 @@ def run_inbox_once(
                 "agent inbox message left pending after handler failure",
                 extra={"message_id": message.id, "message_type": message.message_type},
             )
+            control_plane.fail_message(message.id, result.summary or "handler rejected message")
             failed += 1
     control_plane.heartbeat("idle")
     result = InboxRunResult(fetched=fetched, processed=processed, failed=failed)

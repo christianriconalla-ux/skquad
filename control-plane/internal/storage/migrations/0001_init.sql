@@ -211,11 +211,23 @@ CREATE TABLE IF NOT EXISTS messages (
     status         text NOT NULL DEFAULT 'pending'
                    CHECK (status IN ('pending','delivered','expired','dead')),
     correlation_id uuid,
+    attempts       integer NOT NULL DEFAULT 0,
+    max_attempts   integer NOT NULL DEFAULT 3,
+    next_retry_at  timestamptz NOT NULL DEFAULT now(),
     ttl            interval,
+    expires_at     timestamptz NOT NULL DEFAULT now() + interval '24 hours',
+    terminal_reason text NOT NULL DEFAULT '',
     created_at     timestamptz NOT NULL DEFAULT now(),
     delivered_at   timestamptz
 );
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS max_attempts integer NOT NULL DEFAULT 3;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS next_retry_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS expires_at timestamptz NOT NULL DEFAULT now() + interval '24 hours';
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS terminal_reason text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_messages_inbox ON messages(to_agent_id, status, created_at)
+    WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_messages_retry ON messages(to_agent_id, status, next_retry_at)
     WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_messages_squad ON messages(squad_id, created_at);
 
