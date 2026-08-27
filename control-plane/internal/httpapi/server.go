@@ -26,6 +26,8 @@ import (
 
 const maxAgentMemoryContentChars = 4000
 
+var errNoGatewayModels = errors.New("no active LLM provider models granted")
+
 // Store is the persistence surface required by the current API slice.
 type Store interface {
 	storage.UserStore
@@ -44,10 +46,11 @@ type Store interface {
 
 // Server owns HTTP routing and request-scoped dependencies.
 type Server struct {
-	cfg      *config.Config
-	store    Store
-	oidcAuth OIDCAuthenticator
-	crWriter CRWriter
+	cfg        *config.Config
+	store      Store
+	oidcAuth   OIDCAuthenticator
+	crWriter   CRWriter
+	llmGateway LLMGatewayProvisioner
 }
 
 // OIDCAuthenticator authenticates OIDC Authorization headers.
@@ -64,6 +67,18 @@ type CRWriter interface {
 	DeleteAgent(ctx context.Context, agent *domain.Agent) error
 	WriteAgentCredential(ctx context.Context, credentialRef string, agentID string, token string) error
 	DeleteAgentCredential(ctx context.Context, credentialRef string) error
+}
+
+// LLMGatewayProvisioner issues agent-scoped LiteLLM virtual keys.
+type LLMGatewayProvisioner interface {
+	ProvisionAgentKey(ctx context.Context, req GatewayKeyRequest) (string, error)
+}
+
+// GatewayKeyRequest describes the access a new runtime virtual key should have.
+type GatewayKeyRequest struct {
+	AgentID string
+	SquadID string
+	Models  []string
 }
 
 // New returns an HTTP handler for the control-plane API.
@@ -93,7 +108,11 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 	if crWriter == nil {
 		crWriter = noopCRWriter{}
 	}
-	s := &Server{cfg: cfg, store: store, oidcAuth: oidcAuth, crWriter: crWriter}
+	llmGateway := LLMGatewayProvisioner(noopLLMGateway{})
+	if cfg != nil && cfg.LiteLLMAdminURL != "" && cfg.LiteLLMMasterKey != "" {
+		llmGateway = newLiteLLMGatewayClient(cfg.LiteLLMAdminURL, cfg.LiteLLMMasterKey)
+	}
+	s := &Server{cfg: cfg, store: store, oidcAuth: oidcAuth, crWriter: crWriter, llmGateway: llmGateway}
 
 	r := chi.NewRouter()
 	r.Get("/healthz", s.health)
@@ -183,6 +202,12 @@ func (noopCRWriter) WriteAgentCredential(context.Context, string, string, string
 	return nil
 }
 func (noopCRWriter) DeleteAgentCredential(context.Context, string) error { return nil }
+
+type noopLLMGateway struct{}
+
+func (noopLLMGateway) ProvisionAgentKey(context.Context, GatewayKeyRequest) (string, error) {
+	return generateCredential()
+}
 
 type principalKey struct{}
 type agentPrincipalKey struct{}
@@ -961,9 +986,13 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to generate agent credential")
 		return
 	}
-	virtualKey, err := generateCredential()
+	virtualKey, err := s.provisionAgentVirtualKey(r.Context(), agent)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to generate LLM gateway virtual key")
+		if errors.Is(err, errNoGatewayModels) {
+			writeError(w, http.StatusConflict, "no_llm_models_granted", "agent has no active granted LLM provider models")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "llm_gateway_unavailable", "failed to provision LLM gateway virtual key")
 		return
 	}
 	identity.CredentialHash = hashCredential(credential)
@@ -1007,9 +1036,13 @@ func (s *Server) rotateAgentIdentity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "failed to generate agent credential")
 		return
 	}
-	virtualKey, err := generateCredential()
+	virtualKey, err := s.provisionAgentVirtualKey(r.Context(), agent)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "failed to generate LLM gateway virtual key")
+		if errors.Is(err, errNoGatewayModels) {
+			writeError(w, http.StatusConflict, "no_llm_models_granted", "agent has no active granted LLM provider models")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "llm_gateway_unavailable", "failed to provision LLM gateway virtual key")
 		return
 	}
 	credentialRef := generatedCredentialRef(squad.Namespace, agent.ID)
@@ -1034,6 +1067,60 @@ func (s *Server) rotateAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	_ = s.crWriter.DeleteAgentCredential(r.Context(), existing.VirtualKeyRef)
 	s.recordUserAudit(r, "agent_identity.rotate", "agent_identity", identity.ID, agent.SquadID, nil)
 	writeJSON(w, http.StatusOK, identity)
+}
+
+func (s *Server) provisionAgentVirtualKey(ctx context.Context, agent *domain.Agent) (string, error) {
+	models, err := s.allowedGatewayModels(ctx, agent)
+	if err != nil {
+		return "", err
+	}
+	if s.cfg != nil && s.cfg.LiteLLMAdminURL != "" && s.cfg.LiteLLMMasterKey != "" && len(models) == 0 {
+		return "", fmt.Errorf("%w to agent %s", errNoGatewayModels, agent.ID)
+	}
+	return s.llmGateway.ProvisionAgentKey(ctx, GatewayKeyRequest{
+		AgentID: agent.ID,
+		SquadID: agent.SquadID,
+		Models:  models,
+	})
+}
+
+func (s *Server) allowedGatewayModels(ctx context.Context, agent *domain.Agent) ([]string, error) {
+	perms, err := s.store.ListAgentPermissions(ctx, agent.ID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var models []string
+	add := func(model string) {
+		model = strings.TrimSpace(model)
+		if model == "" || seen[model] {
+			return
+		}
+		seen[model] = true
+		models = append(models, model)
+	}
+	for _, perm := range perms {
+		if perm.ResourceType != domain.ResLLMProvider {
+			continue
+		}
+		provider, err := s.store.GetLLMProvider(ctx, perm.ResourceID)
+		if err != nil {
+			return nil, err
+		}
+		if provider.Status != domain.ResourceActive {
+			continue
+		}
+		add(provider.DefaultModel)
+		var providerModels []string
+		if len(provider.Models) > 0 {
+			if err := json.Unmarshal(provider.Models, &providerModels); err == nil {
+				for _, model := range providerModels {
+					add(model)
+				}
+			}
+		}
+	}
+	return models, nil
 }
 
 func (s *Server) listAgentPermissions(w http.ResponseWriter, r *http.Request) {

@@ -4,8 +4,14 @@
 # through. It meters tokens, computes cost, enforces agent permissions, and
 # routes BYOM calls. See docs/llm-gateway.md.
 #
-# TODO(phase-3): populate model_list from the resource registry and configure
-# the Postgres success_callback for metering.
+# The Helm chart injects this config by default. Keep model_list empty in local
+# development unless a provider is explicitly configured.
 model_list: []
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true
 litellm_settings:
-  success_callback: []   # e.g. ["postgres"] once metering is wired
+  drop_params: true
+  overwrite_user_with_key_hash: true
+  success_callback: []   # metering callbacks are wired in a later slice

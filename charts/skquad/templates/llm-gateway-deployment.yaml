@@ -22,10 +22,52 @@ spec:
         - name: llm-gateway
           image: {{ include "skquad.llmGatewayImage" . | quote }}
           imagePullPolicy: {{ .Values.llmGateway.imagePullPolicy }}
+          args:
+            - --config
+            - /etc/skquad/llm-gateway/config.yaml
+            - --port
+            - {{ .Values.llmGateway.port | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.llmGateway.port }}
               protocol: TCP
+          env:
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skquad.llmGatewayMasterKeySecretName" . }}
+                  key: {{ .Values.llmGateway.masterKeySecret.key }}
+            {{- if .Values.apiServer.databaseUrlSecret.name }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiServer.databaseUrlSecret.name }}
+                  key: {{ .Values.apiServer.databaseUrlSecret.key }}
+            {{- else if .Values.apiServer.databaseUrl }}
+            - name: DATABASE_URL
+              value: {{ .Values.apiServer.databaseUrl | quote }}
+            {{- else if .Values.postgres.enabled }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "skquad.postgresSecretName" . }}
+                  key: {{ .Values.postgres.secretKeys.databaseUrl }}
+            {{- end }}
+            {{- with .Values.llmGateway.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.llmGateway.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: http
           volumeMounts:
             - name: config
               mountPath: /etc/skquad/llm-gateway

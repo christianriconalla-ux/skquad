@@ -52,6 +52,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s:%s" .Values.image.llmGateway.repository .Values.image.llmGateway.tag -}}
 {{- end -}}
 
+{{- define "skquad.llmGatewayMasterKeySecretName" -}}
+{{- if .Values.llmGateway.masterKeySecret.name -}}
+{{- .Values.llmGateway.masterKeySecret.name -}}
+{{- else -}}
+{{- printf "%s-master-key" (include "skquad.llmGatewayName" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "skquad.webName" -}}
 {{- printf "%s-web" (include "skquad.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

@@ -67,13 +67,21 @@ flowchart LR
 ## 4. Virtual Keys
 
 - Each **agent** is issued a **virtual key** by the gateway (via the control
-  plane) when the agent is created.
+  plane) when the agent identity is created or rotated and the LiteLLM admin
+  URL/master key are configured.
 - The agent uses **only its virtual key** to call the gateway — it never holds
   upstream provider credentials.
 - The virtual key encodes the **agent identity** (and squad), so every call is
   attributable for metering, permissions, and rate limiting.
 - Keys can be **rotated** and **revoked** (e.g. when an agent is deleted or its
   permissions change).
+
+Current implementation note: the control plane calls LiteLLM `/key/generate`
+with the model aliases from the agent's active `llm_provider` grants, writes the
+returned raw key into the generated Kubernetes Secret, and stores only the
+Secret ref. If LiteLLM admin settings are absent, local development falls back
+to a generated opaque token. Automatic key updates/revocation when permissions
+change is still a required follow-up.
 
 ---
 
@@ -140,6 +148,10 @@ Control-plane management endpoints (for the API server, not agents):
 - `POST /key/generate` (issue a virtual key for an agent)
 - `POST /key/info`, `POST /key/update`, `POST /key/delete`
 - `GET /global/spend`, `GET /spend` (metering queries)
+
+Skquad currently uses `/key/generate` during identity create/rotate. The
+remaining management endpoints are part of the metering, revocation, and budget
+follow-up work.
 
 ---
 

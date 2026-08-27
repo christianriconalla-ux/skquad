@@ -46,6 +46,10 @@ mutations into the Kubernetes API for the operator. Optional settings:
 - `SKQUAD_AGENT_IMAGE` (default `skquad/agent-runtime:0.1.0`)
 - `SKQUAD_CONTROL_PLANE_URL` (optional runtime callback URL written to Agent CRs)
 - `SKQUAD_LLM_GATEWAY_URL` (optional gateway URL written to Agent CRs)
+- `SKQUAD_LITELLM_ADMIN_URL` (optional LiteLLM management URL; defaults to
+  `SKQUAD_LLM_GATEWAY_URL`)
+- `SKQUAD_LITELLM_MASTER_KEY` (optional LiteLLM admin key; when set, agent
+  identity create/rotate provisions a real LiteLLM virtual key)
 
 Implemented slice:
 
@@ -54,8 +58,8 @@ Implemented slice:
 - Squad CRUD under `/api/v1/squads`
 - Agent CRUD for squads
 - Agent identity create/rotate endpoints with generated credential and
-  virtual-key Secret material, stored credential verifier hashes, and public
-  secret references
+  LiteLLM virtual-key Secret material when gateway admin credentials are
+  configured, stored credential verifier hashes, and public secret references
 - Agent registry permission list/set endpoints
 - Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
   granted active resource discovery, task start/complete/block, queued message
@@ -88,5 +92,6 @@ Implemented slice:
   into the `Agent` CR so the operator can scale an agent up or keep it warm
   while work remains
 
-Next slices are LiteLLM gateway provisioning, task execution leases/results,
-semantic memory search, artifact persistence, and gateway/web implementation.
+Next slices are LiteLLM metering callbacks, key refresh/revocation when grants
+change, task execution leases/results, semantic memory search, artifact
+persistence, and web implementation.

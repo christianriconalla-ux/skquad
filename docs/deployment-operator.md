@@ -209,6 +209,7 @@ charts/skquad/
     ├── operator-deployment.yaml
     ├── operator-rbac.yaml           # ClusterRole/Binding (needs cross-ns)
     ├── operator-serviceaccount.yaml
+    ├── llm-gateway-secret.yaml      # LiteLLM master key (dev or external ref)
     ├── postgres-secret.yaml
     ├── postgres-service.yaml
     ├── postgres-statefulset.yaml
@@ -224,9 +225,11 @@ charts/skquad/
   commits domain state plus Kubernetes outbox intents, then the outbox worker
   writes CRs for the operator to reconcile.
 - **Values** configure images, replicas, resources, Postgres, idle timeout,
-  runtime task/inbox polling defaults, ingress, observability toggle, etc.
+  runtime task/inbox polling defaults, LLM gateway bootstrap config, ingress,
+  observability toggle, etc.
 - **Secrets** default to chart-managed dev values, but production installs can
-  point Postgres and the API database URL at pre-created Kubernetes Secrets.
+  point Postgres, the API database URL, and the LiteLLM master key at
+  pre-created Kubernetes Secrets.
 
 ---
 
@@ -236,7 +239,7 @@ charts/skquad/
 |-----------|----------|-------|
 | **API Server** | Deployment (≥2) | Stateless; talks to Postgres; leases/writes Kubernetes outbox events. |
 | **Web App** | Deployment (≥1) | Serves the SPA; can be same as API server or separate. |
-| **LLM Gateway** | Deployment (≥2) | Stateless; LiteLLM proxy; talks to Postgres + providers. |
+| **LLM Gateway** | Deployment (≥2) | Stateless LiteLLM proxy; authenticates virtual keys; uses Postgres for key/spend state and provider APIs through configured model entries. |
 | **Operator** | Deployment (1, leader-elected) | Needs cluster-wide RBAC (namespaces, deployments, secrets). |
 | **Postgres** | StatefulSet (or managed) | + pgvector; the primary store. |
 | **Prometheus** | Deployment (optional) | Scrapes metrics when observability is enabled. |

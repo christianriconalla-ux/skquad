@@ -418,6 +418,63 @@ func TestAgentIdentityCreateAndRotate(t *testing.T) {
 	require.Contains(t, crWriter.deletedCredentialRefs, identity.VirtualKeyRef)
 }
 
+func TestAgentIdentityProvisionsLiteLLMVirtualKey(t *testing.T) {
+	t.Parallel()
+
+	var keyRequests []map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/key/generate", r.URL.Path)
+		require.Equal(t, "Bearer sk-test-master", r.Header.Get("Authorization"))
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		keyRequests = append(keyRequests, body)
+		_ = json.NewEncoder(w).Encode(map[string]string{"key": "sk-agent-virtual-key"})
+	}))
+	defer gateway.Close()
+
+	cfg := testConfig()
+	cfg.LiteLLMAdminURL = gateway.URL
+	cfg.LiteLLMMasterKey = "sk-test-master"
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(cfg, storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Gateway Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Gateway Agent",
+	}, http.StatusCreated, &agent)
+
+	var provider domain.LLMProvider
+	doJSON(t, handler, http.MethodPost, "/api/v1/registry/llm-providers", map[string]any{
+		"name":          "Local Llama",
+		"kind":          "openai",
+		"base_url":      "http://llama.local/v1",
+		"api_key_ref":   "secret/local-llama",
+		"default_model": "openai/local-default",
+		"models":        []string{"openai/local-default", "openai/local-fast"},
+	}, http.StatusCreated, &provider)
+
+	var perms []domain.AgentPermission
+	doJSON(t, handler, http.MethodPut, "/api/v1/agents/"+agent.ID+"/permissions", []map[string]string{
+		{"resource_type": string(domain.ResLLMProvider), "resource_id": provider.ID},
+	}, http.StatusOK, &perms)
+	require.Len(t, perms, 1)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	require.NotEmpty(t, identity.ID)
+	require.Equal(t, "sk-agent-virtual-key", crWriter.credentialTokens[identity.VirtualKeyRef])
+	require.Len(t, keyRequests, 1)
+	require.ElementsMatch(t, []any{"openai/local-default", "openai/local-fast"}, keyRequests[0]["models"])
+	metadata := keyRequests[0]["metadata"].(map[string]any)
+	require.Equal(t, agent.ID, metadata["skquad_agent_id"])
+	require.Equal(t, squad.ID, metadata["skquad_squad_id"])
+}
+
 func TestAgentPermissionsSetAndList(t *testing.T) {
 	t.Parallel()
 

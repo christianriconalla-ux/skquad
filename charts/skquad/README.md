@@ -23,7 +23,7 @@ The current chart installs:
   cross-namespace resources.
 - API server ServiceAccount, namespaced CR-writer RBAC, cluster-scoped
   agent-credential Secret writer RBAC, Deployment, and Service
-- LLM gateway ConfigMap, Deployment, and Service
+- LLM gateway master-key Secret, ConfigMap, Deployment, and Service
 - Web Deployment and Service
 - Postgres Secret, Service, and StatefulSet for local/dev installs
 - Optional Kubernetes Ingress routing `/api` to the API server and `/` to the
@@ -40,6 +40,15 @@ URL come from a pre-created Secret instead of chart values.
 Override `apiServer.runtimeControlPlaneUrl` or
 `apiServer.runtimeLlmGatewayUrl` when agent pods must call non-chart service
 endpoints.
+
+The chart starts the gateway as a LiteLLM proxy using
+`llmGateway.config`. By default that config enables virtual-key auth through
+`LITELLM_MASTER_KEY`, uses the chart/Postgres `DATABASE_URL`, and has an empty
+`model_list` so the default render is valid without real provider credentials.
+Set `llmGateway.masterKeySecret.name` to use a pre-created Secret instead of
+the development `llmGateway.masterKey` value. Put provider definitions in
+`llmGateway.config` and inject provider API keys with `llmGateway.extraEnv` or
+`llmGateway.extraEnvFrom`; do not place real API keys in the config map.
 
 Runtime polling defaults are configured through `agent.idleTimeout`,
 `agent.taskPollIntervalSeconds`, `agent.inboxPollIntervalSeconds`, and

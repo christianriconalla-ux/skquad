@@ -62,9 +62,10 @@ Python agent runtime have working vertical slices for squad/agent/task
 lifecycle, generated runtime credentials, task wake-up/scale-down, messaging
 inbox APIs, runtime inbox draining, granted resource discovery, dynamic runtime
 plugins, task-scoped context with bounded recent memory, operator deletion
-finalizers, and a durable Kubernetes outbox for Squad/Agent CR convergence. The
-LLM gateway and web app are still early placeholders, and semantic vector memory
-search remains a planned follow-up.
+finalizers, a durable Kubernetes outbox for Squad/Agent CR convergence, and
+LiteLLM gateway bootstrap/key provisioning. The web app is still an early
+placeholder, and semantic vector memory search plus gateway metering callbacks
+remain planned follow-ups.
 
 ---
 

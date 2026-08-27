@@ -44,6 +44,10 @@ type Config struct {
 	ControlPlaneURL string // URL written into Agent CR specs for runtime callbacks
 	LLMGatewayURL   string // URL written into Agent CR specs for LLM gateway calls
 
+	// LiteLLM gateway management
+	LiteLLMAdminURL  string // URL used by the API server for LiteLLM key management
+	LiteLLMMasterKey string // LiteLLM proxy admin key used for virtual-key provisioning
+
 	// Behaviour
 	DefaultIdleTimeout time.Duration
 }
@@ -67,7 +71,12 @@ func Load() (*Config, error) {
 		AgentImage:         envOr("SKQUAD_AGENT_IMAGE", "skquad/agent-runtime:0.1.0"),
 		ControlPlaneURL:    os.Getenv("SKQUAD_CONTROL_PLANE_URL"),
 		LLMGatewayURL:      os.Getenv("SKQUAD_LLM_GATEWAY_URL"),
+		LiteLLMAdminURL:    os.Getenv("SKQUAD_LITELLM_ADMIN_URL"),
+		LiteLLMMasterKey:   os.Getenv("SKQUAD_LITELLM_MASTER_KEY"),
 		DefaultIdleTimeout: envDuration("SKQUAD_DEFAULT_IDLE_TIMEOUT", 5*time.Minute),
+	}
+	if c.LiteLLMAdminURL == "" {
+		c.LiteLLMAdminURL = c.LLMGatewayURL
 	}
 
 	if err := c.validate(); err != nil {
