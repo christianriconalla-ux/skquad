@@ -22,8 +22,8 @@ operator/
 - `runtime.Object` `DeepCopyObject` support for manager/client registration
 - Scheme registration for `skquad.io/v1`
 - controller-runtime manager entrypoint with health/readiness probes
-- First `Squad` reconciler: creates/labels the configured squad namespace and
-  records basic ready status
+- First `Squad` reconciler: creates/labels the configured squad namespace,
+  creates the `skquad-agent` ServiceAccount, default-deny NetworkPolicy, starter
+  ResourceQuota, and records basic ready status
 
-Next slices are default namespace resources (NetworkPolicy/ResourceQuota/
-ServiceAccount) and the Agent reconciler.
+Next slice is the Agent reconciler.

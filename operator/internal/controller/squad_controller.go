@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -16,7 +18,17 @@ import (
 	skquadv1 "github.com/rossbrigoli/skquad/operator/internal/api/v1"
 )
 
-const managedBy = "skquad-operator"
+const (
+	managedBy                 = "skquad-operator"
+	agentServiceAccountName   = "skquad-agent"
+	defaultDenyPolicyName     = "default-deny"
+	defaultSquadQuotaName     = "skquad-squad-quota"
+	defaultSquadPodQuota      = "20"
+	defaultSquadCPURequests   = "4"
+	defaultSquadMemoryRequest = "8Gi"
+	defaultSquadCPULimits     = "8"
+	defaultSquadMemoryLimits  = "16Gi"
+)
 
 // SquadReconciler reconciles Squad resources into isolated Kubernetes
 // namespaces.
@@ -35,27 +47,32 @@ func (r *SquadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	namespaceName := SquadNamespace(&squad)
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespaceName}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, namespace, func() error {
-		if namespace.Labels == nil {
-			namespace.Labels = map[string]string{}
-		}
-		namespace.Labels["app.kubernetes.io/managed-by"] = managedBy
-		namespace.Labels["skquad.io/squad-id"] = squad.Spec.SquadID
-		namespace.Labels["skquad.io/squad-resource"] = squad.Name
+		ensureSquadLabels(&namespace.Labels, &squad)
 		return nil
 	}); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ensureAgentServiceAccount(ctx, &squad, namespaceName); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureDefaultDenyNetworkPolicy(ctx, &squad, namespaceName); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureResourceQuota(ctx, &squad, namespaceName); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	squad.Status.Namespace = namespaceName
 	squad.Status.Ready = true
 	squad.Status.Phase = "Ready"
-	squad.Status.Reason = "NamespaceReady"
+	squad.Status.Reason = "BaseResourcesReady"
 	squad.Status.UpdatedAt = metav1.Now()
 	setCondition(&squad.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
-		Reason:             "NamespaceReady",
-		Message:            fmt.Sprintf("Namespace %s is ready", namespaceName),
+		Reason:             "BaseResourcesReady",
+		Message:            fmt.Sprintf("Namespace %s base resources are ready", namespaceName),
 		ObservedGeneration: squad.Generation,
 	})
 	if err := r.Status().Update(ctx, &squad); err != nil && !apierrors.IsNotFound(err) {
@@ -63,6 +80,53 @@ func (r *SquadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *SquadReconciler) ensureAgentServiceAccount(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
+	serviceAccount := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: agentServiceAccountName, Namespace: namespace},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, serviceAccount, func() error {
+		ensureSquadLabels(&serviceAccount.Labels, squad)
+		return nil
+	})
+	return err
+}
+
+func (r *SquadReconciler) ensureDefaultDenyNetworkPolicy(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: defaultDenyPolicyName, Namespace: namespace},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
+		ensureSquadLabels(&policy.Labels, squad)
+		policy.Spec = networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+		}
+		return nil
+	})
+	return err
+}
+
+func (r *SquadReconciler) ensureResourceQuota(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
+	quota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: defaultSquadQuotaName, Namespace: namespace},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, quota, func() error {
+		ensureSquadLabels(&quota.Labels, squad)
+		quota.Spec.Hard = corev1.ResourceList{
+			corev1.ResourcePods:           resource.MustParse(defaultSquadPodQuota),
+			corev1.ResourceRequestsCPU:    resource.MustParse(defaultSquadCPURequests),
+			corev1.ResourceRequestsMemory: resource.MustParse(defaultSquadMemoryRequest),
+			corev1.ResourceLimitsCPU:      resource.MustParse(defaultSquadCPULimits),
+			corev1.ResourceLimitsMemory:   resource.MustParse(defaultSquadMemoryLimits),
+		}
+		return nil
+	})
+	return err
 }
 
 // SetupWithManager registers the Squad controller with a controller-runtime
@@ -93,4 +157,13 @@ func setCondition(conditions *[]metav1.Condition, condition metav1.Condition) {
 		}
 	}
 	*conditions = append(*conditions, condition)
+}
+
+func ensureSquadLabels(labels *map[string]string, squad *skquadv1.Squad) {
+	if *labels == nil {
+		*labels = map[string]string{}
+	}
+	(*labels)["app.kubernetes.io/managed-by"] = managedBy
+	(*labels)["skquad.io/squad-id"] = squad.Spec.SquadID
+	(*labels)["skquad.io/squad-resource"] = squad.Name
 }
