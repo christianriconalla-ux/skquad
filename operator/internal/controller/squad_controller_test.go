@@ -6,6 +6,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,7 +48,11 @@ func TestSquadReconcilerCreatesNamespace(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(squad).
 		Build()
-	reconciler := &SquadReconciler{Client: k8sClient, Scheme: scheme}
+	reconciler := &SquadReconciler{
+		Client:                      k8sClient,
+		Scheme:                      scheme,
+		APIServerServiceAccountName: "skquad-api-server",
+	}
 
 	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: squad.Name, Namespace: squad.Namespace},
@@ -75,6 +80,24 @@ func TestSquadReconcilerCreatesNamespace(t *testing.T) {
 	var serviceAccount corev1.ServiceAccount
 	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: agentServiceAccountName, Namespace: squad.Spec.Namespace}, &serviceAccount); err != nil {
 		t.Fatal(err)
+	}
+
+	var secretRole rbacv1.Role
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: apiSecretWriterRoleName, Namespace: squad.Spec.Namespace}, &secretRole); err != nil {
+		t.Fatal(err)
+	}
+	if got := secretRole.Rules[0].Resources; !containsString(got, "secrets") {
+		t.Fatalf("secret writer resources = %#v, want secrets", got)
+	}
+	if got := secretRole.Rules[0].Verbs; containsString(got, "list") || !containsString(got, "patch") || !containsString(got, "delete") {
+		t.Fatalf("secret writer verbs = %#v, want patch/delete without list", got)
+	}
+	var secretBinding rbacv1.RoleBinding
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: apiSecretWriterBinding, Namespace: squad.Spec.Namespace}, &secretBinding); err != nil {
+		t.Fatal(err)
+	}
+	if got := secretBinding.Subjects[0]; got.Name != "skquad-api-server" || got.Namespace != squad.Namespace {
+		t.Fatalf("secret writer subject = %#v, want skquad-system/skquad-api-server", got)
 	}
 
 	var policy networkingv1.NetworkPolicy
@@ -109,8 +132,15 @@ func TestSquadReconcilerCreatesNamespace(t *testing.T) {
 	if got := platformPolicy.Spec.Egress[0].To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; got != squad.Namespace {
 		t.Fatalf("platform egress namespace = %q, want %q", got, squad.Namespace)
 	}
-	if got := len(platformPolicy.Spec.Egress[0].Ports); got != 5 {
-		t.Fatalf("platform egress ports = %d, want 5", got)
+	requirement := platformPolicy.Spec.Egress[0].To[0].PodSelector.MatchExpressions[0]
+	if got := requirement.Key; got != "app.kubernetes.io/component" {
+		t.Fatalf("platform egress selector key = %q, want app.kubernetes.io/component", got)
+	}
+	if !containsString(requirement.Values, "api-server") || !containsString(requirement.Values, "llm-gateway") {
+		t.Fatalf("platform egress selector values = %#v, want api-server and llm-gateway", requirement.Values)
+	}
+	if got := platformPolicy.Spec.Egress[0].Ports[0].Port.StrVal; got != "http" {
+		t.Fatalf("platform egress port = %q, want http", got)
 	}
 
 	var quota corev1.ResourceQuota
@@ -158,6 +188,8 @@ func TestSquadReconcilerFinalizerDeletesManagedResources(t *testing.T) {
 			squad,
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: squad.Spec.Namespace}},
 			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: agentServiceAccountName, Namespace: squad.Spec.Namespace}},
+			&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterRoleName, Namespace: squad.Spec.Namespace}},
+			&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterBinding, Namespace: squad.Spec.Namespace}},
 			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: defaultDenyPolicyName, Namespace: squad.Spec.Namespace}},
 			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: dnsEgressPolicyName, Namespace: squad.Spec.Namespace}},
 			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: platformEgressPolicyName, Namespace: squad.Spec.Namespace}},
@@ -177,6 +209,8 @@ func TestSquadReconcilerFinalizerDeletesManagedResources(t *testing.T) {
 
 	for _, obj := range []client.Object{
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: agentServiceAccountName, Namespace: squad.Spec.Namespace}},
+		&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterRoleName, Namespace: squad.Spec.Namespace}},
+		&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterBinding, Namespace: squad.Spec.Namespace}},
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: defaultDenyPolicyName, Namespace: squad.Spec.Namespace}},
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: dnsEgressPolicyName, Namespace: squad.Spec.Namespace}},
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: platformEgressPolicyName, Namespace: squad.Spec.Namespace}},
@@ -216,4 +250,13 @@ func policyTypesEqual(a, b []networkingv1.PolicyType) bool {
 		}
 	}
 	return true
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

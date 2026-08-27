@@ -107,10 +107,14 @@ When the operator sees a `Squad` CR:
      paths agents need: LLM gateway, message queue/Postgres, permitted
      resources).
      The starter reconciler creates default deny, DNS egress to `kube-system`,
-     and platform egress back to the control-plane namespace on HTTP, gateway,
-     and Postgres ports. Registry-derived egress rules come later.
+     and platform egress back to API server / LLM gateway pods in the
+     control-plane namespace by pod selector. Registry-derived egress rules
+     come later.
    - **ResourceQuota** — cap CPU/memory per squad (configurable).
    - **ServiceAccount** — for the squad's agents.
+   - **Secret writer RBAC** — a namespace-local Role/RoleBinding allows the
+     control-plane API server ServiceAccount to apply/delete generated agent
+     credential and virtual-key Secrets only in this squad namespace.
 3. **Status transitions:**
    - `active` → ensure namespace + resources exist.
    - `archived` → scale all agents to 0; keep namespace (read-only).
@@ -260,23 +264,25 @@ over `*.lab`. Immutable image promotion remains a CI/CD follow-up.
 | **API Server** | Deployment (≥2) | Stateless; talks to Postgres; leases/writes Kubernetes outbox events. |
 | **Web App** | Deployment (≥1) | Serves the SPA; can be same as API server or separate. |
 | **LLM Gateway** | Deployment (≥2) | Stateless LiteLLM proxy; authenticates virtual keys; uses Postgres for key/spend state and provider APIs through configured model entries. |
-| **Operator** | Deployment (1, leader-elected) | Needs cluster-wide RBAC (namespaces, deployments, secrets). |
+| **Operator** | Deployment (1, leader-elected) | Needs cluster-wide RBAC for managed namespaces and cross-namespace resources. |
 | **Postgres** | StatefulSet (or managed) | + pgvector; the primary store. |
 | **Prometheus** | Deployment (optional) | Scrapes metrics when observability is enabled. |
 
-- The **operator** needs a **ClusterRole** (it creates namespaces + deployments
-  across the cluster). All other components are namespace-scoped.
+- The **operator** needs a **ClusterRole** (it creates namespaces, deployments,
+  network policies, and per-squad RBAC across the cluster). The API server's
+  generated Secret write/delete authority is granted by namespace-local
+  RoleBindings that the operator creates in reconciled squad namespaces.
 
 ---
 
 ## 9. Network Policies & Isolation
 
 - **Squad namespaces** are **default-deny**; egress allowed only to:
-  - The **LLM gateway** (control plane).
-  - **Postgres** (message queue + memory) — or via the control plane.
+  - The **API server** and **LLM gateway** pods in the control-plane namespace.
   - **Permitted resource endpoints** (KBs, workspaces) — as granted.
-- The current starter policy allows DNS plus platform namespace egress; granted
-  external resource endpoints will be rendered into additional policies later.
+- The current starter policy allows DNS plus selector-scoped platform egress;
+  granted external resource endpoints will be rendered into additional policies
+  later.
 - **No direct pod-to-pod** between squads — cross-squad interaction goes through
   the **control plane / message queue** (which enforces access grants).
 - The **control plane** is reachable by squad agents (for API + gateway +

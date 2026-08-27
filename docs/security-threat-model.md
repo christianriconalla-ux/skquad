@@ -58,6 +58,9 @@
 - **Threat:** Squad A reads or controls squad B's agents/tasks/data.
 - **Mitigations:**
   - Squad = **namespace**; **network policies** default-deny between squads.
+  - Squad namespace egress is limited to DNS plus API server / LLM gateway pods
+    selected in the control-plane namespace; direct Postgres egress is not part
+    of the default agent policy.
   - All cross-squad interaction goes through the **control plane**, which
     enforces **access grants**.
   - API layer always filters by `squad_id` + ownership (optionally Postgres
@@ -69,6 +72,9 @@
 - **Mitigations:**
   - Credentials stored as **K8s secrets** (scoped per agent/squad); never
     returned to clients.
+  - The API server gets generated Secret write/delete authority through
+    operator-created RoleBindings in each managed squad namespace, not through a
+    chart-level cluster-wide Secret writer role.
   - **Virtual keys** are per-agent, revocable, and rate-limited.
   - **Rotation** without re-creating the agent; old keys revoked on rotation.
   - **Least privilege** — a key only grants the agent's permitted models.

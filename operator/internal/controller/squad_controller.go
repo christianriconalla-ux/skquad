@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +24,8 @@ const (
 	managedBy                 = "skquad-operator"
 	squadFinalizer            = "skquad.io/squad-cleanup"
 	agentServiceAccountName   = "skquad-agent"
+	apiSecretWriterRoleName   = "skquad-api-agent-secret-writer"
+	apiSecretWriterBinding    = "skquad-api-agent-secret-writer"
 	defaultDenyPolicyName     = "default-deny"
 	dnsEgressPolicyName       = "allow-dns-egress"
 	platformEgressPolicyName  = "allow-skquad-platform-egress"
@@ -38,7 +41,8 @@ const (
 // namespaces.
 type SquadReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme                      *runtime.Scheme
+	APIServerServiceAccountName string
 }
 
 // Reconcile ensures the squad namespace exists and records basic status.
@@ -80,6 +84,9 @@ func (r *SquadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.ensureAgentServiceAccount(ctx, &squad, namespaceName); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.ensureAPISecretWriterRBAC(ctx, &squad, namespaceName); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.ensureDefaultDenyNetworkPolicy(ctx, &squad, namespaceName); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -118,6 +125,8 @@ func (r *SquadReconciler) cleanupSquad(ctx context.Context, squad *skquadv1.Squa
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: defaultDenyPolicyName, Namespace: namespaceName}},
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: dnsEgressPolicyName, Namespace: namespaceName}},
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: platformEgressPolicyName, Namespace: namespaceName}},
+		&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterBinding, Namespace: namespaceName}},
+		&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterRoleName, Namespace: namespaceName}},
 		&corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: defaultSquadQuotaName, Namespace: namespaceName}},
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: agentServiceAccountName, Namespace: namespaceName}},
 	} {
@@ -134,6 +143,50 @@ func (r *SquadReconciler) ensureAgentServiceAccount(ctx context.Context, squad *
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, serviceAccount, func() error {
 		ensureSquadLabels(&serviceAccount.Labels, squad)
+		return nil
+	})
+	return err
+}
+
+func (r *SquadReconciler) ensureAPISecretWriterRBAC(ctx context.Context, squad *skquadv1.Squad, namespace string) error {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterRoleName, Namespace: namespace},
+	}
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, role, func() error {
+		ensureSquadLabels(&role.Labels, squad)
+		role.Rules = []rbacv1.PolicyRule{{
+			APIGroups: []string{""},
+			Resources: []string{
+				"secrets",
+			},
+			Verbs: []string{
+				"get",
+				"create",
+				"patch",
+				"update",
+				"delete",
+			},
+		}}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: apiSecretWriterBinding, Namespace: namespace},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, binding, func() error {
+		ensureSquadLabels(&binding.Labels, squad)
+		binding.RoleRef = rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "Role",
+			Name:     apiSecretWriterRoleName,
+		}
+		binding.Subjects = []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      r.apiServerServiceAccountName(),
+			Namespace: squad.Namespace,
+		}}
 		return nil
 	})
 	return err
@@ -205,13 +258,19 @@ func (r *SquadReconciler) ensurePlatformEgressNetworkPolicy(ctx context.Context,
 							"kubernetes.io/metadata.name": squad.Namespace,
 						},
 					},
+					PodSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{{
+							Key:      "app.kubernetes.io/component",
+							Operator: metav1.LabelSelectorOpIn,
+							Values: []string{
+								"api-server",
+								"llm-gateway",
+							},
+						}},
+					},
 				}},
 				Ports: []networkingv1.NetworkPolicyPort{
-					networkPolicyPort(corev1.ProtocolTCP, 80),
-					networkPolicyPort(corev1.ProtocolTCP, 443),
-					networkPolicyPort(corev1.ProtocolTCP, 8000),
-					networkPolicyPort(corev1.ProtocolTCP, 8080),
-					networkPolicyPort(corev1.ProtocolTCP, 5432),
+					networkPolicyNamedPort(corev1.ProtocolTCP, "http"),
 				},
 			}},
 		}
@@ -243,6 +302,20 @@ func networkPolicyPort(protocol corev1.Protocol, port int) networkingv1.NetworkP
 		Protocol: &protocol,
 		Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: int32(port)},
 	}
+}
+
+func networkPolicyNamedPort(protocol corev1.Protocol, port string) networkingv1.NetworkPolicyPort {
+	return networkingv1.NetworkPolicyPort{
+		Protocol: &protocol,
+		Port:     &intstr.IntOrString{Type: intstr.String, StrVal: port},
+	}
+}
+
+func (r *SquadReconciler) apiServerServiceAccountName() string {
+	if r.APIServerServiceAccountName != "" {
+		return r.APIServerServiceAccountName
+	}
+	return "skquad-api-server"
 }
 
 func deleteIfExists(ctx context.Context, c client.Client, obj client.Object) error {

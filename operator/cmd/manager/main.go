@@ -54,8 +54,9 @@ func main() {
 	}
 
 	if err := (&controller.SquadReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:                      mgr.GetClient(),
+		Scheme:                      mgr.GetScheme(),
+		APIServerServiceAccountName: envOrDefault("SKQUAD_API_SERVER_SERVICE_ACCOUNT_NAME", "skquad-api-server"),
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create Squad controller")
 		os.Exit(1)
@@ -82,4 +83,11 @@ func main() {
 		ctrl.Log.Error(err, "manager exited")
 		os.Exit(1)
 	}
+}
+
+func envOrDefault(name string, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }

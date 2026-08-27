@@ -141,8 +141,9 @@ automatic.
 - `skquad-system` holds the control plane and all Squad/Agent CRs.
 - Each Squad CR names one managed data-plane namespace.
 - The operator creates each squad namespace, `skquad-agent` ServiceAccount,
-  starter ResourceQuota, default-deny NetworkPolicy, DNS egress policy, and
-  platform egress policy.
+  starter ResourceQuota, default-deny NetworkPolicy, DNS egress policy,
+  platform egress policy, and a namespace-local Secret writer RoleBinding for
+  the control-plane API server.
 - Agent Deployments run in the squad namespace, not in `skquad-system`.
 
 List managed CRs:
@@ -156,7 +157,7 @@ Inspect generated data-plane resources:
 
 ```bash
 kubectl get ns --selector skquad.io/managed-by=skquad
-kubectl --namespace squad-<id> get sa,deploy,netpol,resourcequota
+kubectl --namespace squad-<id> get sa,deploy,netpol,resourcequota,role,rolebinding
 ```
 
 ## Generated Secrets
@@ -172,6 +173,12 @@ The raw credential and virtual key are not stored in PostgreSQL. The control
 plane stores the runtime credential verifier hash and the Kubernetes Secret
 refs. Secret writes still happen synchronously during identity create/rotate
 because the outbox intentionally does not persist raw token material.
+
+The API server no longer receives cluster-wide Secret writer RBAC from the
+chart. Instead, each reconciled squad namespace gets a local
+`skquad-api-agent-secret-writer` Role and RoleBinding that grants the chart's
+API server ServiceAccount only the Secret verbs needed for generated runtime
+credential and virtual-key Secrets in that namespace.
 
 Check Secret refs on an Agent CR:
 
@@ -306,14 +313,15 @@ mount paths unless actively debugging on a private terminal.
 ## Security and RBAC Notes
 
 - The operator needs cluster-scope access for namespaces and cross-namespace
-  managed resources.
-- The API server currently needs Secret write/delete access for generated
-  agent credential and virtual-key Secrets. Narrower namespace-scoped authority
-  remains follow-up hardening.
+  managed resources, including namespace-local Roles/RoleBindings that grant
+  the API server generated Secret write/delete authority per squad namespace.
+- The API server's generated Secret authority is namespace-scoped by the
+  operator-created RoleBinding in each reconciled squad namespace.
 - Agent pods receive only mounted runtime credentials and LiteLLM virtual keys;
   they do not receive provider API keys directly.
-- NetworkPolicy currently permits DNS and platform egress. Registry-derived
-  external egress policies are still future work.
+- NetworkPolicy permits DNS and egress to API server / LLM gateway pods in the
+  control-plane namespace by pod selector. Registry-derived external egress
+  policies are still future work.
 - Do not enable public ingress while `apiServer.authMode=dev`.
 
 ## Uninstall

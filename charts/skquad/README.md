@@ -34,10 +34,12 @@ The current chart installs:
 - Operator namespace, ServiceAccount, ClusterRole, ClusterRoleBinding, and
   Deployment. The ClusterRole includes CR finalizer update permissions and
   delete permissions for managed Namespaces, Deployments, ServiceAccounts,
-  ResourceQuotas, and NetworkPolicies so operator finalizers can clean up
-  cross-namespace resources.
-- API server ServiceAccount, namespaced CR-writer RBAC, cluster-scoped
-  agent-credential Secret writer RBAC, Deployment, and Service
+  ResourceQuotas, NetworkPolicies, and per-squad RBAC so operator finalizers can
+  clean up cross-namespace resources.
+- API server ServiceAccount, namespaced CR-writer RBAC, Deployment, and Service.
+  Generated agent credential and virtual-key Secret write/delete access is
+  granted by operator-created RoleBindings in each reconciled squad namespace,
+  not by a chart-level cluster-wide Secret writer role.
 - LLM gateway master-key Secret, ConfigMap, Deployment, and Service
 - Web Deployment and Service
 - Postgres Secret, Service, and StatefulSet for local/dev installs

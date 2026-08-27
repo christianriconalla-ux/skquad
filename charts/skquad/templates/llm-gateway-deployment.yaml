@@ -40,7 +40,7 @@ spec:
             - name: LITELLM_MIGRATION_DIR
               value: {{ .Values.llmGateway.migrationDir | quote }}
             - name: SKQUAD_CONTROL_PLANE_URL
-              value: {{ default (printf "http://%s.%s.svc.cluster.local:8080" (include "skquad.apiServerName" .) .Release.Namespace) .Values.apiServer.runtimeControlPlaneUrl | quote }}
+              value: {{ default (printf "http://%s.%s.svc.cluster.local" (include "skquad.apiServerName" .) .Release.Namespace) .Values.apiServer.runtimeControlPlaneUrl | quote }}
             - name: SKQUAD_GATEWAY_CALLBACK_TOKEN
               valueFrom:
                 secretKeyRef:

@@ -24,7 +24,8 @@ operator/
 - controller-runtime manager entrypoint with health/readiness probes
 - First `Squad` reconciler: creates/labels the configured squad namespace,
   creates the `skquad-agent` ServiceAccount, default-deny NetworkPolicy, DNS and
-  platform egress allow policies, starter ResourceQuota, and records basic ready
+  selector-scoped API/gateway egress allow policy, namespace-local API Secret
+  writer Role/RoleBinding, starter ResourceQuota, and records basic ready
   status. It adds a `skquad.io/squad-cleanup` finalizer and explicitly deletes
   managed cross-namespace resources plus the managed Namespace on CR deletion.
 - First `Agent` reconciler: resolves the owning squad namespace, creates/updates
