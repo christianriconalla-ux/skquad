@@ -11,8 +11,9 @@ platform control.
 
 > [!IMPORTANT]
 > skquad is an early-stage project with a working vertical slice; it is not yet
-> production-ready. The web application currently has an authenticated shell,
-> but the full product workflows are still in progress, and the
+> production-ready. The web application currently has an authenticated shell
+> plus first-pass squad, agent, task, identity, and chat workflows, but registry
+> and admin workflows are still in progress, and the
 > default Helm values intentionally use development authentication and
 > credentials. See [Current status](#current-status) before deploying it.
 
@@ -66,7 +67,7 @@ detail.
 | [`operator/`](operator/) | Go, controller-runtime | Reconciles `Squad` and `Agent` resources into namespaces, workloads, and scale-to-zero lifecycle. |
 | [`agent-runtime/`](agent-runtime/) | Python, FastAPI | Claims tasks, assembles context, loads granted plugins, calls models, drains messages, and reports outcomes. |
 | [`llm-gateway/`](llm-gateway/) | LiteLLM | Central model proxy and per-agent virtual-key boundary. |
-| [`web/`](web/) | Next.js | User interface with an authenticated shell and initial squad overview. |
+| [`web/`](web/) | Next.js | User interface with an authenticated shell plus squad, agent, task, identity, and chat workflows. |
 | [`charts/skquad/`](charts/skquad/) | Helm | Installs the control plane, CRDs, operator, gateway, web app, and optional PostgreSQL. |
 
 ## Current status
@@ -89,8 +90,9 @@ The repository currently implements:
 
 Important gaps remain:
 
-- the web application shell exists, but the detailed squad, agent, task,
-  registry, and admin workflows are not complete;
+- the web application has initial squad, agent, task, identity, and chat
+  workflows, but registry, grants, metering, audit, and admin workflows are not
+  complete;
 - automatic LiteLLM key refresh or revocation after permission changes is not
   implemented;
 - semantic vector memory and durable artifact storage are planned;

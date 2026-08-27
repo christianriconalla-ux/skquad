@@ -1,6 +1,7 @@
 # skquad — Web App & UX Design
 
-> **Status:** Draft v1
+> **Status:** Draft v1; first-pass squad, agent, task, identity, and chat
+> workflows are implemented in the current web app.
 >
 > The web app is a **SPA** (React / Next.js) — the primary interface for users.
 > It is optimised for **simplicity**: the onboarding path is a few clicks, and
@@ -79,6 +80,10 @@
   (for agent-created tasks) the creating agent.
 - **Live updates:** columns update as agents work (via polling or WebSocket).
 
+Current implementation: users can create tasks, move them between statuses,
+assign/reassign agents, and delete tasks. Rich task detail, activity, drag and
+drop, and live updates remain follow-up work.
+
 ### 4.2 Agent Panel
 - **List of agents** in the squad (name, role, state: idle/busy).
 - **Agent detail:**
@@ -86,7 +91,11 @@
   - **Identity** — status, "Create identity" / "Rotate" (owner).
   - **Permissions** — which registry resources the agent may use (grant/revoke).
   - **Metering** — tokens + cost for this agent.
-  - **Chat** — open a 1:1 chat with the agent.
+- **Chat** — open a 1:1 chat with the agent.
+
+Current implementation: users can create agents, create/rotate their identities,
+select an agent, view queued chat history, and enqueue consult messages. Resource
+permission management and metering panels remain follow-up work.
 
 ### 4.3 Chat (secondary)
 - A 1:1 conversation with an agent (ad-hoc questions / steering).

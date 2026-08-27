@@ -37,8 +37,9 @@ still defaults to development authentication.
   cluster when a chart change needs API admission validation.
 - Lab deployment promotion is considered complete only after ArgoCD applies the
   pinned `sha-<short-sha>` image set and the deployed workloads become healthy.
-- The web job builds the current authenticated app shell; product workflow UI
-  coverage is tracked separately.
+- The web job builds the current authenticated app shell plus first-pass squad,
+  agent, task, identity, and chat workflow UI. Registry, grants, metering,
+  audit, and admin workflows are tracked separately.
 
 ## Image Publishing
 

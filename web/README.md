@@ -16,16 +16,20 @@ web/
 
 ## Current Implementation
 
-- Provides the first authenticated application shell with top-level navigation
-  for squads, agents, tasks, registry, and admin areas.
+- Provides the authenticated application shell with top-level navigation for
+  squads, agents, tasks, registry, and admin areas.
 - Represents dev-mode auth by calling the API without a token and future OIDC
   bearer auth through a locally stored token field.
 - Uses `NEXT_PUBLIC_SKQUAD_API_BASE_URL` for browser API calls. The Helm chart
   defaults this to `/api/v1`, matching the chart ingress path split.
-- Loads `/auth/me` and `/squads` into the shell, with bounded loading, empty,
-  and error states.
-- Keeps feature screens beyond the squad overview as placeholders for the next
-  workflow slices.
+- Loads `/auth/me`, `/squads`, squad agents, squad boards, and selected agent
+  chat history, with bounded loading, empty, and error states.
+- Supports first-pass operational workflows for creating squads, updating squad
+  mission text, adding agents, creating/rotating agent identities, creating
+  tasks, moving tasks across Kanban statuses, reassigning tasks, deleting tasks,
+  and enqueueing user-to-agent consult messages.
+- Keeps registry, grants, metering, audit, and deeper admin workflows as
+  follow-up screens.
 
 ## Verification
 
