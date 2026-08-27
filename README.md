@@ -98,7 +98,7 @@ skquad/
 ├── llm-gateway/              # LLM gateway (LiteLLM proxy, Python)
 ├── web/                      # web app (React / Next.js, TypeScript)
 ├── charts/skquad/            # Helm chart
-└── .github/workflows/        # CI/CD
+└── .github/workflows/        # CI and container image publishing
 ```
 
 ---

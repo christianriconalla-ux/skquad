@@ -2,19 +2,19 @@
 # See docs/deployment-operator.md §6 for the full chart layout.
 image:
   apiServer:
-    repository: skquad/api-server
+    repository: ghcr.io/rossbrigoli/skquad-api-server
     tag: "0.1.0"
   operator:
-    repository: skquad/operator
+    repository: ghcr.io/rossbrigoli/skquad-operator
     tag: "0.1.0"
   llmGateway:
-    repository: skquad/llm-gateway
+    repository: ghcr.io/rossbrigoli/skquad-llm-gateway
     tag: "0.1.0"
   agentRuntime:
-    repository: skquad/agent-runtime
+    repository: ghcr.io/rossbrigoli/skquad-agent-runtime
     tag: "0.1.0"
   web:
-    repository: skquad/web
+    repository: ghcr.io/rossbrigoli/skquad-web
     tag: "0.1.0"
 
 replicas:

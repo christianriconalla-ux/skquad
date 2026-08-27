@@ -10,6 +10,19 @@ Packages and deploys the skquad control plane + operator on vanilla Kubernetes
 helm install skquad charts/skquad -n skquad-system --create-namespace
 ```
 
+## Images
+
+The chart defaults to GHCR images published by the repository workflows:
+
+- `ghcr.io/rossbrigoli/skquad-api-server`
+- `ghcr.io/rossbrigoli/skquad-operator`
+- `ghcr.io/rossbrigoli/skquad-llm-gateway`
+- `ghcr.io/rossbrigoli/skquad-agent-runtime`
+- `ghcr.io/rossbrigoli/skquad-web`
+
+Override `image.*.repository` and `image.*.tag` for local builds, private
+registries, or a specific `sha-<short-sha>` image.
+
 CRDs for `squads.skquad.io` and `agents.skquad.io` are installed from
 `charts/skquad/crds` before the rest of the chart.
 
