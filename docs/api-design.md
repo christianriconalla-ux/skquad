@@ -153,6 +153,10 @@ creation for `delegate`/`handoff` is tracked as a later workflow slice.
 | `PATCH` | `/api/v1/registry/llm-providers/:id` | Update (admin). |
 | `POST` | `/api/v1/registry/llm-providers/:id/deprecate` | Deprecate (admin). |
 
+Provider payloads distinguish registry identity from model routing:
+`default_provider_id`/provider `id` is the registry UUID, while
+`default_model` is the LiteLLM/gateway model alias sent by the runtime.
+
 ### 9.2 Skills / Tools / APIs / Knowledge Bases / Workspaces
 The same CRUD pattern applies to each type:
 

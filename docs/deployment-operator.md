@@ -72,7 +72,8 @@ spec:
   agentId: <uuid>
   squadId: <uuid>
   role: "coder"
-  defaultProviderId: "provider-or-model-alias"
+  defaultProviderId: <provider-uuid>
+  defaultModel: "openai/gpt-4o-mini"
   image: skquad/agent-runtime:<tag>
   credentialSecret: agent-<id>-credential
   virtualKeySecret: agent-<id>-virtual-key
@@ -125,7 +126,7 @@ When the operator sees an `Agent` CR:
      warm until `idleTimeout` has elapsed, then scale to `0`.
    - **Secrets:** mount the agent's credential + LLM gateway virtual key when
      the Agent CR includes Kubernetes Secret names.
-   - **Env:** agent config (role, default provider/model hint, permissions,
+   - **Env:** agent config (role, registry provider ID, default model alias, permissions,
      endpoints, and `SKQUAD_TASK_LOOP_ENABLED=true`).
    - **Probes:** `/healthz`, `/readyz`.
    - **Resources:** requests/limits (configurable).

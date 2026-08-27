@@ -31,7 +31,8 @@ agent-runtime/
   first handler-driven execution loop: claim a task, run an injected handler,
   complete to `in-review`/`done`, or block on handler failure.
 - Provides a default `LiteLLMTaskHandler` that reads the mounted LLM gateway
-  virtual key, calls the OpenAI-compatible gateway through LiteLLM, exposes
+  virtual key, calls the OpenAI-compatible gateway through LiteLLM using the
+  explicit `SKQUAD_DEFAULT_MODEL` model alias, exposes
   registered plugin tool schemas, discovers granted active resources, and
   invokes loaded plugin tool calls.
 - Starts the task loop in the runtime process when `SKQUAD_TASK_LOOP_ENABLED`

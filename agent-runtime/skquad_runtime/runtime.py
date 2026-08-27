@@ -26,6 +26,7 @@ class BootstrapConfig:
     squad_id: str
     role: str
     default_provider_id: str
+    default_model: str
     idle_timeout: str
     credentials_dir: Path
     agent_credential_path: Path
@@ -42,8 +43,8 @@ class BootstrapConfig:
         if not self.squad_id:
             missing.append("SKQUAD_SQUAD_ID")
         if self.task_loop_enabled:
-            if not self.default_provider_id:
-                missing.append("SKQUAD_DEFAULT_PROVIDER_ID")
+            if not self.default_model and not self.default_provider_id:
+                missing.append("SKQUAD_DEFAULT_MODEL")
             if not self.control_plane_url:
                 missing.append("SKQUAD_CONTROL_PLANE_URL")
             if not self.llm_gateway_url:
@@ -124,6 +125,7 @@ def load_bootstrap_config(environ: Mapping[str, str] | None = None) -> Bootstrap
         squad_id=env.get("SKQUAD_SQUAD_ID", ""),
         role=env.get("SKQUAD_AGENT_ROLE", ""),
         default_provider_id=env.get("SKQUAD_DEFAULT_PROVIDER_ID", ""),
+        default_model=env.get("SKQUAD_DEFAULT_MODEL", ""),
         idle_timeout=env.get("SKQUAD_IDLE_TIMEOUT", ""),
         credentials_dir=credentials_dir,
         agent_credential_path=Path(
@@ -298,9 +300,9 @@ class LiteLLMTaskHandler:
             raise RuntimeError("LLM gateway virtual key is not loaded")
         if not config.llm_gateway_url:
             raise RuntimeError("SKQUAD_LLM_GATEWAY_URL is required")
-        model = self.model or config.default_provider_id
+        model = self.model or config.default_model or config.default_provider_id
         if not model:
-            raise RuntimeError("SKQUAD_DEFAULT_PROVIDER_ID is required")
+            raise RuntimeError("SKQUAD_DEFAULT_MODEL is required")
 
         messages: list[dict[str, object]] = [
             {
@@ -408,6 +410,9 @@ def resource_prompt_line(resource: RuntimeResource) -> str:
     package_ref = resource.manifest.get("package_ref")
     if package_ref:
         bits.append(f"package={package_ref}")
+    default_model = resource.manifest.get("default_model")
+    if default_model:
+        bits.append(f"default_model={default_model}")
     return "- " + " | ".join(bits)
 
 

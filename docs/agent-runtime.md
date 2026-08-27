@@ -134,7 +134,7 @@ result = handler.handle_task(task, config)
 
 # Internally this calls:
 litellm.completion(
-    model=config.default_provider_id,   # temporary model/routing hint
+    model=config.default_model,         # LiteLLM/gateway model alias
     messages=working_context.messages,
     api_base=config.llm_gateway_url,    # central gateway
     api_key=agent.virtual_key,          # per-agent virtual key
@@ -228,7 +228,8 @@ variables:
 | `SKQUAD_AGENT_ID` | Agent identity in the control plane. |
 | `SKQUAD_SQUAD_ID` | Owning squad identity. |
 | `SKQUAD_AGENT_ROLE` | Role text from the Agent CR. |
-| `SKQUAD_DEFAULT_PROVIDER_ID` | Default provider/model routing hint. |
+| `SKQUAD_DEFAULT_PROVIDER_ID` | Registry provider ID for metadata and compatibility. |
+| `SKQUAD_DEFAULT_MODEL` | Default LiteLLM/gateway model alias used for task execution. Falls back to `SKQUAD_DEFAULT_PROVIDER_ID` only for legacy deployments. |
 | `SKQUAD_IDLE_TIMEOUT` | Idle timeout string used for scale-to-zero behavior. |
 | `SKQUAD_CREDENTIALS_DIR` | Root directory for mounted agent credentials. |
 | `SKQUAD_AGENT_CREDENTIAL_PATH` | Mounted Secret directory or file for the agent credential. |
@@ -239,7 +240,7 @@ variables:
 
 The runtime readiness check reports only booleans for secret presence; it never
 returns raw credential values. When the task loop is enabled, `/readyz` requires
-agent identity, control-plane URL, LLM gateway URL, default provider/model hint,
+agent identity, control-plane URL, LLM gateway URL, default model/provider hint,
 agent credential, and LLM gateway virtual key. With the task loop disabled,
 readiness only requires the base agent identity and credential.
 

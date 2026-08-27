@@ -27,6 +27,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                 "SKQUAD_SQUAD_ID": "squad-1",
                 "SKQUAD_AGENT_ROLE": "coder",
                 "SKQUAD_DEFAULT_PROVIDER_ID": "provider-1",
+                "SKQUAD_DEFAULT_MODEL": "openai/gpt-4o-mini",
                 "SKQUAD_IDLE_TIMEOUT": "300s",
                 "SKQUAD_CREDENTIALS_DIR": "/tmp/credentials",
                 "SKQUAD_AGENT_CREDENTIAL_PATH": "/tmp/credentials/agent",
@@ -39,6 +40,8 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(config.agent_id, "agent-1")
         self.assertEqual(config.squad_id, "squad-1")
         self.assertEqual(config.role, "coder")
+        self.assertEqual(config.default_provider_id, "provider-1")
+        self.assertEqual(config.default_model, "openai/gpt-4o-mini")
         self.assertEqual(config.agent_credential_path, Path("/tmp/credentials/agent"))
         self.assertEqual(config.virtual_key_path, Path("/tmp/credentials/gateway"))
         self.assertTrue(config.task_loop_enabled)
@@ -64,12 +67,12 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.json()["missing_required"],
-            [
-                "SKQUAD_AGENT_ID",
-                "SKQUAD_SQUAD_ID",
-                "SKQUAD_DEFAULT_PROVIDER_ID",
-                "SKQUAD_CONTROL_PLANE_URL",
-                "SKQUAD_LLM_GATEWAY_URL",
+                [
+                    "SKQUAD_AGENT_ID",
+                    "SKQUAD_SQUAD_ID",
+                    "SKQUAD_DEFAULT_MODEL",
+                    "SKQUAD_CONTROL_PLANE_URL",
+                    "SKQUAD_LLM_GATEWAY_URL",
             ],
         )
 
@@ -85,7 +88,8 @@ class RuntimeBootstrapTest(unittest.TestCase):
                 {
                     "SKQUAD_AGENT_ID": "agent-1",
                     "SKQUAD_SQUAD_ID": "squad-1",
-                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "provider-1",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential_dir),
                     "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key_dir),
                     "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
@@ -108,7 +112,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                 {
                     "SKQUAD_AGENT_ID": "agent-1",
                     "SKQUAD_SQUAD_ID": "squad-1",
-                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
                     "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(Path(tmp) / "missing-gateway"),
                     "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
@@ -277,7 +281,8 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
                     "SKQUAD_CONTROL_PLANE_URL": "http://control-plane",
                     "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
-                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "provider-1",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
                 }
             )
             calls = []
@@ -295,6 +300,33 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertEqual(calls[0]["api_base"], "http://gateway")
             self.assertEqual(calls[0]["api_key"], "virtual-key")
 
+    def test_litellm_handler_falls_back_to_legacy_provider_env_for_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            virtual_key = Path(tmp) / "llm-gateway"
+            virtual_key.write_text("virtual-key", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
+                    "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
+                    "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
+                    "SKQUAD_DEFAULT_PROVIDER_ID": "legacy-model-alias",
+                }
+            )
+            calls = []
+
+            def completion(**kwargs):
+                calls.append(kwargs)
+                return fake_completion("Ready for review.")
+
+            handler = LiteLLMTaskHandler(completion=completion, discover_resources=False)
+
+            result = handler.handle_task(fake_task("task-1"), config)
+
+            self.assertEqual(result.status, "in-review")
+            self.assertEqual(calls[0]["model"], "legacy-model-alias")
+
     def test_litellm_handler_includes_runtime_resources_in_prompt(self):
         with tempfile.TemporaryDirectory() as tmp:
             virtual_key = Path(tmp) / "llm-gateway"
@@ -306,7 +338,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
                     "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
                     "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
-                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
                 }
             )
             calls = []
@@ -348,7 +380,7 @@ class RuntimeBootstrapTest(unittest.TestCase):
                     "SKQUAD_AGENT_CREDENTIAL_PATH": str(Path(tmp) / "agent"),
                     "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH": str(virtual_key),
                     "SKQUAD_LLM_GATEWAY_URL": "http://gateway",
-                    "SKQUAD_DEFAULT_PROVIDER_ID": "model-1",
+                    "SKQUAD_DEFAULT_MODEL": "model-1",
                 }
             )
             plugin = EchoPlugin()

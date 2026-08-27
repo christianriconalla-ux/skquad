@@ -342,12 +342,13 @@ func (s *Server) createLLMProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name      string          `json:"name"`
-		Kind      string          `json:"kind"`
-		BaseURL   string          `json:"base_url"`
-		APIKeyRef string          `json:"api_key_ref"`
-		Models    json.RawMessage `json:"models"`
-		Pricing   json.RawMessage `json:"pricing"`
+		Name         string          `json:"name"`
+		Kind         string          `json:"kind"`
+		BaseURL      string          `json:"base_url"`
+		APIKeyRef    string          `json:"api_key_ref"`
+		DefaultModel string          `json:"default_model"`
+		Models       json.RawMessage `json:"models"`
+		Pricing      json.RawMessage `json:"pricing"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -367,6 +368,7 @@ func (s *Server) createLLMProvider(w http.ResponseWriter, r *http.Request) {
 		Kind:         strings.TrimSpace(req.Kind),
 		BaseURL:      strings.TrimSpace(req.BaseURL),
 		APIKeyRef:    req.APIKeyRef,
+		DefaultModel: strings.TrimSpace(req.DefaultModel),
 		Models:       req.Models,
 		Pricing:      req.Pricing,
 		Status:       domain.ResourceActive,
@@ -409,12 +411,13 @@ func (s *Server) updateLLMProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name      *string          `json:"name"`
-		Kind      *string          `json:"kind"`
-		BaseURL   *string          `json:"base_url"`
-		APIKeyRef *string          `json:"api_key_ref"`
-		Models    *json.RawMessage `json:"models"`
-		Pricing   *json.RawMessage `json:"pricing"`
+		Name         *string          `json:"name"`
+		Kind         *string          `json:"kind"`
+		BaseURL      *string          `json:"base_url"`
+		APIKeyRef    *string          `json:"api_key_ref"`
+		DefaultModel *string          `json:"default_model"`
+		Models       *json.RawMessage `json:"models"`
+		Pricing      *json.RawMessage `json:"pricing"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -439,6 +442,9 @@ func (s *Server) updateLLMProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.APIKeyRef != nil {
 		provider.APIKeyRef = *req.APIKeyRef
+	}
+	if req.DefaultModel != nil {
+		provider.DefaultModel = strings.TrimSpace(*req.DefaultModel)
 	}
 	if req.Models != nil {
 		provider.Models = *req.Models
@@ -815,6 +821,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		Name              string          `json:"name"`
 		Role              string          `json:"role"`
 		DefaultProviderID string          `json:"default_provider_id"`
+		DefaultModel      string          `json:"default_model"`
 		Permissions       json.RawMessage `json:"permissions"`
 		IdleTimeoutSec    int             `json:"idle_timeout_sec"`
 	}
@@ -837,7 +844,8 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		SquadID:         squad.ID,
 		Name:            req.Name,
 		Role:            req.Role,
-		DefaultProvider: req.DefaultProviderID,
+		DefaultProvider: strings.TrimSpace(req.DefaultProviderID),
+		DefaultModel:    strings.TrimSpace(req.DefaultModel),
 		Permissions:     req.Permissions,
 		IdleTimeoutSec:  req.IdleTimeoutSec,
 		Status:          domain.AgentIdle,
@@ -885,6 +893,7 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		Name              *string          `json:"name"`
 		Role              *string          `json:"role"`
 		DefaultProviderID *string          `json:"default_provider_id"`
+		DefaultModel      *string          `json:"default_model"`
 		Permissions       *json.RawMessage `json:"permissions"`
 		IdleTimeoutSec    *int             `json:"idle_timeout_sec"`
 	}
@@ -903,7 +912,10 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		agent.Role = *req.Role
 	}
 	if req.DefaultProviderID != nil {
-		agent.DefaultProvider = *req.DefaultProviderID
+		agent.DefaultProvider = strings.TrimSpace(*req.DefaultProviderID)
+	}
+	if req.DefaultModel != nil {
+		agent.DefaultModel = strings.TrimSpace(*req.DefaultModel)
 	}
 	if req.Permissions != nil {
 		agent.Permissions = *req.Permissions
@@ -1501,8 +1513,10 @@ func (s *Server) agentRuntimeResource(ctx context.Context, perm *domain.AgentPer
 		if provider.Status != domain.ResourceActive {
 			return agentRuntimeResource{}, false, nil
 		}
-		manifest, err := json.Marshal(map[string]json.RawMessage{
-			"models": provider.Models,
+		manifest, err := json.Marshal(map[string]any{
+			"kind":          provider.Kind,
+			"default_model": provider.DefaultModel,
+			"models":        json.RawMessage(defaultRawJSON(provider.Models, "[]")),
 		})
 		if err != nil {
 			return agentRuntimeResource{}, false, err

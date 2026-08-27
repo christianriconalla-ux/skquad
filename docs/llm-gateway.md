@@ -104,8 +104,11 @@ POST /v1/chat/completions  (agent → gateway)
 ## 6. BYOM Routing
 
 - The **resource registry** holds **LLM provider** entries: `type`, `base_url`,
-  `api_key_ref` (secret), `models`, `pricing`.
-- The gateway maps a requested **model** to its **provider** and routes the
+  `api_key_ref` (secret), `default_model`, `models`, `pricing`.
+- The provider `id` is registry identity only. Agents send a concrete
+  LiteLLM/gateway **model alias** such as `openai/gpt-4o-mini` or
+  `ollama/llama3.2`.
+- The gateway maps the requested model alias to its **provider** and routes the
   call to the provider's `base_url` using the provider's credentials.
 - **Predefined providers** (admin-registered) power the fast onboarding path.
 - **BYOM providers** (user-registered, with the user's key) are routed the same

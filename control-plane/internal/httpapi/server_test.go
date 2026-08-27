@@ -34,11 +34,14 @@ func TestSquadAgentTaskFlow(t *testing.T) {
 
 	var agent domain.Agent
 	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
-		"name": "Architect",
-		"role": "technical lead",
+		"name":                "Architect",
+		"role":                "technical lead",
+		"default_provider_id": "",
+		"default_model":       "openai/gpt-4o-mini",
 	}, http.StatusCreated, &agent)
 	require.NotEmpty(t, agent.ID)
 	require.Equal(t, squad.ID, agent.SquadID)
+	require.Equal(t, "openai/gpt-4o-mini", agent.DefaultModel)
 	require.Equal(t, 300, agent.IdleTimeoutSec)
 
 	var task domain.Task
@@ -175,18 +178,28 @@ func TestRegistryLLMProviderAndGenericResourceFlow(t *testing.T) {
 
 	var provider domain.LLMProvider
 	doJSON(t, handler, http.MethodPost, "/api/v1/registry/llm-providers", map[string]any{
-		"name":        "Local Llama",
-		"kind":        "openai-compatible",
-		"base_url":    "http://localhost:8123/v1",
-		"api_key_ref": "secret/local-llama",
-		"models":      []string{"default"},
+		"name":          "Local Llama",
+		"kind":          "openai-compatible",
+		"base_url":      "http://localhost:8123/v1",
+		"api_key_ref":   "secret/local-llama",
+		"default_model": "ollama/llama3.2",
+		"models":        []string{"ollama/llama3.2"},
 	}, http.StatusCreated, &provider)
 	require.NotEmpty(t, provider.ID)
 	require.Equal(t, domain.ResourceActive, provider.Status)
+	require.Equal(t, "ollama/llama3.2", provider.DefaultModel)
 
 	var providers []domain.LLMProvider
 	doJSON(t, handler, http.MethodGet, "/api/v1/registry/llm-providers", nil, http.StatusOK, &providers)
 	require.Len(t, providers, 1)
+	require.Equal(t, "ollama/llama3.2", providers[0].DefaultModel)
+
+	var updatedProvider domain.LLMProvider
+	doJSON(t, handler, http.MethodPatch, "/api/v1/registry/llm-providers/"+provider.ID, map[string]any{
+		"default_model": "ollama/qwen2.5-coder",
+		"models":        []string{"ollama/llama3.2", "ollama/qwen2.5-coder"},
+	}, http.StatusOK, &updatedProvider)
+	require.Equal(t, "ollama/qwen2.5-coder", updatedProvider.DefaultModel)
 
 	var skill domain.RegistryResource
 	doJSON(t, handler, http.MethodPost, "/api/v1/registry/skills", map[string]any{
@@ -439,11 +452,12 @@ func TestAgentRuntimeResourcesReturnsGrantedActiveResources(t *testing.T) {
 
 	var provider domain.LLMProvider
 	doJSON(t, handler, http.MethodPost, "/api/v1/registry/llm-providers", map[string]any{
-		"name":        "Gateway Model",
-		"kind":        "openai-compatible",
-		"base_url":    "http://llm-gateway/v1",
-		"api_key_ref": "secret/provider-key",
-		"models":      []string{"model-a"},
+		"name":          "Gateway Model",
+		"kind":          "openai-compatible",
+		"base_url":      "http://llm-gateway/v1",
+		"api_key_ref":   "secret/provider-key",
+		"default_model": "gateway/model-a",
+		"models":        []string{"gateway/model-a"},
 	}, http.StatusCreated, &provider)
 
 	var tool domain.RegistryResource
@@ -479,6 +493,9 @@ func TestAgentRuntimeResourcesReturnsGrantedActiveResources(t *testing.T) {
 	require.Equal(t, provider.ID, resources[0]["resource_id"])
 	require.Equal(t, "http://llm-gateway/v1", resources[0]["endpoint"])
 	require.NotContains(t, resources[0], "api_key_ref")
+	manifest := resources[0]["manifest"].(map[string]any)
+	require.Equal(t, "openai-compatible", manifest["kind"])
+	require.Equal(t, "gateway/model-a", manifest["default_model"])
 	require.Equal(t, string(domain.ResTool), resources[1]["resource_type"])
 	require.Equal(t, tool.ID, resources[1]["resource_id"])
 	require.NotContains(t, resources[1], "auth_ref")

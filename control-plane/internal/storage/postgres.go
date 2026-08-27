@@ -251,18 +251,18 @@ func (p *PostgresStore) ListSquads(ctx context.Context, ownerID string) ([]*doma
 
 func (p *PostgresStore) CreateAgent(ctx context.Context, a *domain.Agent) (*domain.Agent, error) {
 	row := p.pool.QueryRow(ctx, `
-		INSERT INTO agents (squad_id, name, role, default_provider, permissions, idle_timeout_sec, status)
-		VALUES ($1, $2, $3, nullif($4, '')::uuid, $5, $6, $7)
+		INSERT INTO agents (squad_id, name, role, default_provider, default_model, permissions, idle_timeout_sec, status)
+		VALUES ($1, $2, $3, nullif($4, '')::uuid, $5, $6, $7, $8)
 		RETURNING id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
-		          coalesce(default_provider::text, ''), permissions, idle_timeout_sec, status, created_at, updated_at
-	`, a.SquadID, a.Name, a.Role, a.DefaultProvider, defaultJSON(a.Permissions, "[]"), a.IdleTimeoutSec, defaultAgentStatus(a.Status))
+		          coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
+	`, a.SquadID, a.Name, a.Role, a.DefaultProvider, a.DefaultModel, defaultJSON(a.Permissions, "[]"), a.IdleTimeoutSec, defaultAgentStatus(a.Status))
 	return scanAgent(row)
 }
 
 func (p *PostgresStore) GetAgent(ctx context.Context, id string) (*domain.Agent, error) {
 	row := p.pool.QueryRow(ctx, `
 		SELECT id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
-		       coalesce(default_provider::text, ''), permissions, idle_timeout_sec, status, created_at, updated_at
+		       coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
 		FROM agents
 		WHERE id = $1
 	`, id)
@@ -275,14 +275,15 @@ func (p *PostgresStore) UpdateAgent(ctx context.Context, a *domain.Agent) (*doma
 		SET name = $2,
 		    role = $3,
 		    default_provider = nullif($4, '')::uuid,
-		    permissions = $5,
-		    idle_timeout_sec = $6,
-		    status = $7,
+		    default_model = $5,
+		    permissions = $6,
+		    idle_timeout_sec = $7,
+		    status = $8,
 		    updated_at = now()
 		WHERE id = $1
 		RETURNING id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
-		          coalesce(default_provider::text, ''), permissions, idle_timeout_sec, status, created_at, updated_at
-	`, a.ID, a.Name, a.Role, a.DefaultProvider, defaultJSON(a.Permissions, "[]"), a.IdleTimeoutSec, defaultAgentStatus(a.Status))
+		          coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
+	`, a.ID, a.Name, a.Role, a.DefaultProvider, a.DefaultModel, defaultJSON(a.Permissions, "[]"), a.IdleTimeoutSec, defaultAgentStatus(a.Status))
 	return scanAgent(row)
 }
 
@@ -300,7 +301,7 @@ func (p *PostgresStore) DeleteAgent(ctx context.Context, id string) error {
 func (p *PostgresStore) ListAgents(ctx context.Context, squadID string) ([]*domain.Agent, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT id::text, squad_id::text, name, role, coalesce(identity_id::text, ''),
-		       coalesce(default_provider::text, ''), permissions, idle_timeout_sec, status, created_at, updated_at
+		       coalesce(default_provider::text, ''), default_model, permissions, idle_timeout_sec, status, created_at, updated_at
 		FROM agents
 		WHERE squad_id = $1
 		ORDER BY name
@@ -473,16 +474,16 @@ func (p *PostgresStore) AgentMayMessageSquad(ctx context.Context, agentID, squad
 
 func (p *PostgresStore) CreateLLMProvider(ctx context.Context, provider *domain.LLMProvider) (*domain.LLMProvider, error) {
 	row := p.pool.QueryRow(ctx, `
-		INSERT INTO llm_providers (name, kind, base_url, api_key_ref, models, pricing, status, registered_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id::text, name, kind, base_url, api_key_ref, models, pricing, status, registered_by::text, created_at
-	`, provider.Name, provider.Kind, provider.BaseURL, provider.APIKeyRef, defaultJSON(provider.Models, "[]"), defaultJSON(provider.Pricing, "{}"), defaultResourceStatus(provider.Status), provider.RegisteredBy)
+		INSERT INTO llm_providers (name, kind, base_url, api_key_ref, default_model, models, pricing, status, registered_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id::text, name, kind, base_url, api_key_ref, default_model, models, pricing, status, registered_by::text, created_at
+	`, provider.Name, provider.Kind, provider.BaseURL, provider.APIKeyRef, provider.DefaultModel, defaultJSON(provider.Models, "[]"), defaultJSON(provider.Pricing, "{}"), defaultResourceStatus(provider.Status), provider.RegisteredBy)
 	return scanLLMProvider(row)
 }
 
 func (p *PostgresStore) GetLLMProvider(ctx context.Context, id string) (*domain.LLMProvider, error) {
 	row := p.pool.QueryRow(ctx, `
-		SELECT id::text, name, kind, base_url, api_key_ref, models, pricing, status, registered_by::text, created_at
+		SELECT id::text, name, kind, base_url, api_key_ref, default_model, models, pricing, status, registered_by::text, created_at
 		FROM llm_providers
 		WHERE id = $1
 	`, id)
@@ -496,12 +497,13 @@ func (p *PostgresStore) UpdateLLMProvider(ctx context.Context, provider *domain.
 		    kind = $3,
 		    base_url = $4,
 		    api_key_ref = $5,
-		    models = $6,
-		    pricing = $7,
-		    status = $8
+		    default_model = $6,
+		    models = $7,
+		    pricing = $8,
+		    status = $9
 		WHERE id = $1
-		RETURNING id::text, name, kind, base_url, api_key_ref, models, pricing, status, registered_by::text, created_at
-	`, provider.ID, provider.Name, provider.Kind, provider.BaseURL, provider.APIKeyRef, defaultJSON(provider.Models, "[]"), defaultJSON(provider.Pricing, "{}"), defaultResourceStatus(provider.Status))
+		RETURNING id::text, name, kind, base_url, api_key_ref, default_model, models, pricing, status, registered_by::text, created_at
+	`, provider.ID, provider.Name, provider.Kind, provider.BaseURL, provider.APIKeyRef, provider.DefaultModel, defaultJSON(provider.Models, "[]"), defaultJSON(provider.Pricing, "{}"), defaultResourceStatus(provider.Status))
 	return scanLLMProvider(row)
 }
 
@@ -522,7 +524,7 @@ func (p *PostgresStore) DeprecateLLMProvider(ctx context.Context, id string) err
 
 func (p *PostgresStore) ListLLMProviders(ctx context.Context) ([]*domain.LLMProvider, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id::text, name, kind, base_url, api_key_ref, models, pricing, status, registered_by::text, created_at
+		SELECT id::text, name, kind, base_url, api_key_ref, default_model, models, pricing, status, registered_by::text, created_at
 		FROM llm_providers
 		ORDER BY name
 	`)
@@ -1134,6 +1136,7 @@ func scanLLMProvider(row scanner) (*domain.LLMProvider, error) {
 		&p.Kind,
 		&p.BaseURL,
 		&p.APIKeyRef,
+		&p.DefaultModel,
 		&p.Models,
 		&p.Pricing,
 		&p.Status,

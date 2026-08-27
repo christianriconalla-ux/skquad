@@ -75,6 +75,7 @@ type AgentSpec struct {
 	SquadID           string               `json:"squadId"`
 	Role              string               `json:"role,omitempty"`
 	DefaultProviderID string               `json:"defaultProviderId,omitempty"`
+	DefaultModel      string               `json:"defaultModel,omitempty"`
 	Image             string               `json:"image"`
 	CredentialSecret  string               `json:"credentialSecret,omitempty"`
 	VirtualKeySecret  string               `json:"virtualKeySecret,omitempty"`

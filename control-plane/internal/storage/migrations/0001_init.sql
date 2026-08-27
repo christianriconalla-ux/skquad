@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS agents (
     role               text NOT NULL DEFAULT '',
     identity_id        uuid,
     default_provider   uuid,
+    default_model      text NOT NULL DEFAULT '',
     permissions        jsonb NOT NULL DEFAULT '[]',
     idle_timeout_sec   integer NOT NULL DEFAULT 300,
     status             text NOT NULL DEFAULT 'idle'
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS agents (
     UNIQUE (squad_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_agents_squad ON agents(squad_id);
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS default_model text NOT NULL DEFAULT '';
 
 -- ---------------------------------------------------------------------------
 -- Agent identities (owner-created; credential + virtual-key refs)
@@ -109,6 +111,7 @@ CREATE TABLE IF NOT EXISTS llm_providers (
     kind          text NOT NULL,
     base_url      text NOT NULL,
     api_key_ref   text NOT NULL,
+    default_model text NOT NULL DEFAULT '',
     models        jsonb NOT NULL DEFAULT '[]',
     pricing       jsonb NOT NULL DEFAULT '{}',
     status        text NOT NULL DEFAULT 'active'
@@ -116,6 +119,7 @@ CREATE TABLE IF NOT EXISTS llm_providers (
     registered_by uuid NOT NULL REFERENCES users(id),
     created_at    timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE llm_providers ADD COLUMN IF NOT EXISTS default_model text NOT NULL DEFAULT '';
 
 -- ---------------------------------------------------------------------------
 -- Registry: generic resources (skills, tools, apis, knowledge bases, workspaces)

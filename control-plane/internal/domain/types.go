@@ -70,6 +70,7 @@ type Agent struct {
 	Role            string          `json:"role"`
 	IdentityID      string          `json:"identity_id,omitempty"`
 	DefaultProvider string          `json:"default_provider_id,omitempty"`
+	DefaultModel    string          `json:"default_model,omitempty"`
 	Permissions     json.RawMessage `json:"permissions"`
 	IdleTimeoutSec  int             `json:"idle_timeout_sec"`
 	Status          AgentStatus     `json:"status"`
@@ -205,6 +206,7 @@ type LLMProvider struct {
 	Kind         string          `json:"kind"` // openai, anthropic, ollama, ...
 	BaseURL      string          `json:"base_url"`
 	APIKeyRef    string          `json:"api_key_ref"`
+	DefaultModel string          `json:"default_model,omitempty"`
 	Models       json.RawMessage `json:"models"`
 	Pricing      json.RawMessage `json:"pricing"`
 	Status       ResourceStatus  `json:"status"`

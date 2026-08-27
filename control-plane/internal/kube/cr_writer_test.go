@@ -69,7 +69,8 @@ func TestUpsertAgentMapsGeneratedSecretRefs(t *testing.T) {
 		ID:              "agent-1",
 		SquadID:         "squad-1",
 		Role:            "coder",
-		DefaultProvider: "model-1",
+		DefaultProvider: "11111111-1111-1111-1111-111111111111",
+		DefaultModel:    "openai/gpt-4o-mini",
 		IdleTimeoutSec:  300,
 	}
 	identity := &domain.AgentIdentity{
@@ -91,6 +92,12 @@ func TestUpsertAgentMapsGeneratedSecretRefs(t *testing.T) {
 	}
 	if got := spec["virtualKeySecret"]; got != "agent-agent-1-virtual-key-efgh5678" {
 		t.Fatalf("virtualKeySecret = %q", got)
+	}
+	if got := spec["defaultProviderId"]; got != agent.DefaultProvider {
+		t.Fatalf("defaultProviderId = %q, want %q", got, agent.DefaultProvider)
+	}
+	if got := spec["defaultModel"]; got != agent.DefaultModel {
+		t.Fatalf("defaultModel = %q, want %q", got, agent.DefaultModel)
 	}
 }
 

@@ -18,7 +18,7 @@ erDiagram
     SQUAD ||--o{ ACCESS_GRANT : issues
     KANBAN_BOARD ||--o{ TASK : holds
     TASK }o--|| AGENT : assigned_to
-    AGENT }o--|| LLM_PROVIDER : default_model
+    AGENT }o--|| LLM_PROVIDER : default_provider
     AGENT }o--o{ RESOURCE : permitted_to_use
     USER ||--o{ AGENT_IDENTITY : creates
     SQUAD }o--|| USER : owned_by
@@ -49,6 +49,7 @@ erDiagram
         string credentials_ref "secret ref"
         jsonb permissions
         uuid default_provider_id FK
+        string default_model "LiteLLM/gateway model alias"
         string status "idle | busy | error | deleted"
         timestamptz created_at
     }
@@ -121,7 +122,8 @@ erDiagram
   **credentials** (a secret reference).
 - Has a **role** within the squad (from the operating model) and a **set of
   permissions** (which registry resources it may use).
-- Has a **default LLM provider** (from the registry).
+- Has a **default LLM provider** (registry identity) and a **default model**
+  (LiteLLM/gateway routing alias).
 - **Working context is task-scoped** — reset before each new task.
 - Has **long-term memory** (Postgres + pgvector) that persists across tasks.
 

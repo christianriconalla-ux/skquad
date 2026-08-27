@@ -43,6 +43,7 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 			SquadID:           squad.Spec.SquadID,
 			Role:              "worker",
 			DefaultProviderID: "provider-id",
+			DefaultModel:      "openai/gpt-4o-mini",
 			Image:             "example.com/skquad/agent:test",
 			CredentialSecret:  "agent-credential",
 			VirtualKeySecret:  "agent-virtual-key",
@@ -99,6 +100,12 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	}
 	if got := envValue(container.Env, "SKQUAD_LLM_GATEWAY_URL"); got != agent.Spec.LLMGatewayURL {
 		t.Fatalf("llm gateway url env = %q, want %q", got, agent.Spec.LLMGatewayURL)
+	}
+	if got := envValue(container.Env, "SKQUAD_DEFAULT_PROVIDER_ID"); got != agent.Spec.DefaultProviderID {
+		t.Fatalf("default provider env = %q, want %q", got, agent.Spec.DefaultProviderID)
+	}
+	if got := envValue(container.Env, "SKQUAD_DEFAULT_MODEL"); got != agent.Spec.DefaultModel {
+		t.Fatalf("default model env = %q, want %q", got, agent.Spec.DefaultModel)
 	}
 	if got := envValue(container.Env, "SKQUAD_TASK_LOOP_ENABLED"); got != "true" {
 		t.Fatalf("task loop enabled env = %q, want true", got)

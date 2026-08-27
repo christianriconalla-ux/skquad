@@ -79,12 +79,16 @@ llm_provider(
   type,            # openai | anthropic | ollama | ...
   base_url,
   api_key_ref,     # secret ref (credential)
-  models,          # list of model ids this provider serves
+  default_model,   # LiteLLM/gateway model alias used by default
+  models,          # list of LiteLLM/gateway model aliases this provider serves
   pricing,         # { input_per_token, output_per_token } (optional)
   status           # active | deprecated
 )
 ```
 - Consumed by the **LLM gateway** for routing + metering + cost.
+- `id` identifies the registry provider. It is not the model string sent to
+  LiteLLM. Agents send `default_model` or an explicit model alias; the gateway
+  maps that model to the provider and upstream endpoint.
 
 ### 5.2 Skill
 ```

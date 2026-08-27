@@ -76,6 +76,7 @@ CREATE TABLE agents (
     identity_id   uuid REFERENCES agent_identities(id),
     credentials_ref text,               -- K8s secret ref
     default_provider_id uuid REFERENCES llm_providers(id),
+    default_model text NOT NULL DEFAULT '', -- LiteLLM/gateway model alias
     status        text NOT NULL DEFAULT 'idle'
                   CHECK (status IN ('idle', 'busy', 'error', 'deleted')),
     idle_timeout  interval NOT NULL DEFAULT '300s',
@@ -121,6 +122,7 @@ CREATE TABLE llm_providers (
     type          text NOT NULL,        -- openai | anthropic | ollama | ...
     base_url      text NOT NULL,
     api_key_ref   text,                 -- secret ref
+    default_model text NOT NULL DEFAULT '', -- default LiteLLM/gateway model alias
     models        jsonb NOT NULL DEFAULT '[]',  -- list of model ids
     pricing       jsonb,                -- { input_per_token, output_per_token, currency }
     status        text NOT NULL DEFAULT 'active'
@@ -336,7 +338,8 @@ users 1—* squads (owner)
 squads 1—1 kanban_boards
 squads 1—* agents
 agents *—1 agent_identities
-agents *—1 llm_providers (default)
+agents *—1 llm_providers (default provider)
+agents default_model —> gateway model alias
 agents *—* {registry resources} via agent_permissions
 squads 1—* access_grants
 kanban_boards 1—* tasks
