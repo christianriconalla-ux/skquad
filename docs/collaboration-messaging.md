@@ -42,8 +42,7 @@ message(
   id,
   from_type,        # agent | user
   from_id,
-  to_type,          # agent
-  to_id,            # recipient agent
+  to_agent_id,      # recipient agent
   squad_id,         # recipient's squad
   type,             # consult | delegate | handoff | ping | reply
   payload,          # JSON (question, task ref, context, etc.)
@@ -56,8 +55,12 @@ message(
 
 - Messages are stored in the **message queue** (Postgres-backed for v1 — see
   ADR-0004).
-- Each agent has an **inbox** (messages where `to_id = agent` and
+- Each agent has an **inbox** (messages where `to_agent_id = agent` and
   `status = pending`).
+- Current implementation includes the control-plane queue API:
+  `POST /api/v1/agents/me/messages`, `GET /api/v1/agents/me/messages`,
+  `POST /api/v1/agents/me/messages/:id/ack`, and user-facing
+  `POST`/`GET /api/v1/agents/:id/chat`.
 
 ---
 
@@ -142,6 +145,10 @@ Agent idle → check inbox
   to scale that agent **0 → 1** (see [deployment-operator.md](deployment-operator.md)).
 - The agent, once up, **drains its inbox** and starts the work.
 - This is how a **cross-squad handoff** wakes a sleeping agent.
+
+Current implementation note: the control plane mirrors pending inbox messages
+into the target Agent CR activity signal. Runtime inbox draining and automatic
+delegate/handoff task materialization remain follow-up slices.
 
 ---
 

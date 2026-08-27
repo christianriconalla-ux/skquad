@@ -23,6 +23,7 @@ type Store interface {
 	AgentStore
 	BoardStore
 	TaskStore
+	MessageStore
 	RegistryStore
 	PermissionStore
 	GrantStore
@@ -77,6 +78,14 @@ type TaskStore interface {
 	ListTasks(ctx context.Context, boardID string, status domain.TaskStatus) ([]*domain.Task, error) // status "" = all
 	ListAgentTasks(ctx context.Context, agentID string) ([]*domain.Task, error)
 	ClaimNextTask(ctx context.Context, agentID string) (*domain.Task, error)
+}
+
+// MessageStore persists queued agent collaboration messages.
+type MessageStore interface {
+	CreateMessage(ctx context.Context, m *domain.Message) (*domain.Message, error)
+	ListPendingMessages(ctx context.Context, agentID string) ([]*domain.Message, error)
+	ListAgentMessageHistory(ctx context.Context, agentID string) ([]*domain.Message, error)
+	AckMessage(ctx context.Context, agentID string, messageID string) (*domain.Message, error)
 }
 
 // RegistryStore persists registry resources (LLM providers + generic resources).

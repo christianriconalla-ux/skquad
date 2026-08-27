@@ -132,7 +132,7 @@ When the operator sees an `Agent` CR:
 2. **React to the control plane's desired activity signal.**
 3. **Scale-to-zero logic** (ADR-0003):
    - **Scale up (0 → 1):** when the control plane sets `desiredActive: true`
-     (a task is assigned, or a message/ping is queued for the agent).
+     (a task is assigned, or a pending inbox message is queued for the agent).
    - **Scale down (1 → 0):** when the agent reports **idle** (task complete,
      inbox drained) **and** the operator-observed **idle timeout** elapses with
      no new work.

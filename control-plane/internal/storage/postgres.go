@@ -977,6 +977,60 @@ func (p *PostgresStore) claimTodoTask(ctx context.Context, tx pgx.Tx, agentID st
 	return scanTask(row)
 }
 
+func (p *PostgresStore) CreateMessage(ctx context.Context, m *domain.Message) (*domain.Message, error) {
+	row := p.pool.QueryRow(ctx, `
+		INSERT INTO messages (
+			from_type, from_id, to_agent_id, squad_id, type, payload, status, correlation_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid)
+		RETURNING id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
+		          type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
+	`, m.FromType, m.FromID, m.ToAgentID, m.SquadID, defaultMessageType(m.Type), defaultJSON(m.Payload, "{}"), defaultMessageStatus(m.Status), m.CorrelationID)
+	return scanMessage(row)
+}
+
+func (p *PostgresStore) ListPendingMessages(ctx context.Context, agentID string) ([]*domain.Message, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
+		       type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
+		FROM messages
+		WHERE to_agent_id = $1 AND status = $2
+		ORDER BY created_at, id
+	`, agentID, domain.MessagePending)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (p *PostgresStore) ListAgentMessageHistory(ctx context.Context, agentID string) ([]*domain.Message, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
+		       type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
+		FROM messages
+		WHERE to_agent_id = $1
+		ORDER BY created_at, id
+	`, agentID)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (p *PostgresStore) AckMessage(ctx context.Context, agentID string, messageID string) (*domain.Message, error) {
+	row := p.pool.QueryRow(ctx, `
+		UPDATE messages
+		SET status = CASE WHEN status = $3 THEN $4 ELSE status END,
+		    delivered_at = CASE WHEN status = $3 AND delivered_at IS NULL THEN now() ELSE delivered_at END
+		WHERE id = $1 AND to_agent_id = $2
+		RETURNING id::text, from_type, from_id::text, to_agent_id::text, squad_id::text,
+		          type, payload, status, coalesce(correlation_id::text, ''), created_at, delivered_at
+	`, messageID, agentID, domain.MessagePending, domain.MessageDelivered)
+	return scanMessage(row)
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -1146,6 +1200,42 @@ func scanTask(row scanner) (*domain.Task, error) {
 	return &t, nil
 }
 
+func scanMessage(row scanner) (*domain.Message, error) {
+	var msg domain.Message
+	var deliveredAt sql.NullTime
+	if err := row.Scan(
+		&msg.ID,
+		&msg.FromType,
+		&msg.FromID,
+		&msg.ToAgentID,
+		&msg.SquadID,
+		&msg.Type,
+		&msg.Payload,
+		&msg.Status,
+		&msg.CorrelationID,
+		&msg.CreatedAt,
+		&deliveredAt,
+	); err != nil {
+		return nil, mapPgErr(err)
+	}
+	if deliveredAt.Valid {
+		msg.DeliveredAt = deliveredAt.Time
+	}
+	return &msg, nil
+}
+
+func scanMessages(rows pgx.Rows) ([]*domain.Message, error) {
+	var messages []*domain.Message
+	for rows.Next() {
+		msg, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+	return messages, mapPgErr(rows.Err())
+}
+
 func scanAuditEntry(row scanner) (*domain.AuditEntry, error) {
 	var entry domain.AuditEntry
 	if err := row.Scan(
@@ -1202,6 +1292,20 @@ func defaultAgentStatus(status domain.AgentStatus) domain.AgentStatus {
 func defaultTaskStatus(status domain.TaskStatus) domain.TaskStatus {
 	if status == "" {
 		return domain.TaskTodo
+	}
+	return status
+}
+
+func defaultMessageType(messageType domain.MessageType) domain.MessageType {
+	if messageType == "" {
+		return domain.MessageConsult
+	}
+	return messageType
+}
+
+func defaultMessageStatus(status domain.MessageStatus) domain.MessageStatus {
+	if status == "" {
+		return domain.MessagePending
 	}
 	return status
 }

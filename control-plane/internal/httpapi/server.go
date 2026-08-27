@@ -36,6 +36,7 @@ type Store interface {
 	storage.MeteringStore
 	storage.AuditStore
 	storage.TaskStore
+	storage.MessageStore
 }
 
 // Server owns HTTP routing and request-scoped dependencies.
@@ -100,6 +101,9 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 
 			r.Get("/tasks", s.listCurrentAgentTasks)
 			r.Get("/resources", s.listCurrentAgentResources)
+			r.Get("/messages", s.listCurrentAgentMessages)
+			r.Post("/messages", s.createCurrentAgentMessage)
+			r.Post("/messages/{messageID}/ack", s.ackCurrentAgentMessage)
 			r.Post("/tasks/claim", s.claimCurrentAgentTask)
 			r.Post("/tasks/{taskID}/start", s.startCurrentAgentTask)
 			r.Post("/tasks/{taskID}/complete", s.completeCurrentAgentTask)
@@ -126,6 +130,8 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 			r.Get("/agents/{agentID}", s.getAgent)
 			r.Patch("/agents/{agentID}", s.updateAgent)
 			r.Delete("/agents/{agentID}", s.deleteAgent)
+			r.Post("/agents/{agentID}/chat", s.createAgentChatMessage)
+			r.Get("/agents/{agentID}/chat", s.listAgentChatMessages)
 			r.Post("/agents/{agentID}/identity", s.createAgentIdentity)
 			r.Post("/agents/{agentID}/identity/rotate", s.rotateAgentIdentity)
 			r.Get("/agents/{agentID}/permissions", s.listAgentPermissions)
@@ -1301,6 +1307,182 @@ func (s *Server) listCurrentAgentResources(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resources)
 }
 
+func (s *Server) listCurrentAgentMessages(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	messages, err := s.store.ListPendingMessages(r.Context(), principal.Agent.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, messages)
+}
+
+type messageRequest struct {
+	ToAgentID     string             `json:"to_agent_id"`
+	ToID          string             `json:"to_id"`
+	Type          domain.MessageType `json:"type"`
+	Payload       json.RawMessage    `json:"payload"`
+	Message       string             `json:"message"`
+	CorrelationID string             `json:"correlation_id"`
+}
+
+func (s *Server) createCurrentAgentMessage(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	var req messageRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	targetID := strings.TrimSpace(req.ToAgentID)
+	if targetID == "" {
+		targetID = strings.TrimSpace(req.ToID)
+	}
+	if targetID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "to_agent_id is required")
+		return
+	}
+	messageType := req.Type
+	if messageType == "" {
+		messageType = domain.MessageConsult
+	}
+	if !messageType.Valid() {
+		writeError(w, http.StatusBadRequest, "bad_request", "type is invalid")
+		return
+	}
+	target, err := s.store.GetAgent(r.Context(), targetID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if target.SquadID != principal.Agent.SquadID {
+		ok, err := s.store.AgentMayMessageSquad(r.Context(), principal.Agent.ID, target.SquadID)
+		if err != nil {
+			writeStorageError(w, err)
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusForbidden, "forbidden", "agent cannot message the target squad")
+			return
+		}
+	}
+	created, err := s.store.CreateMessage(r.Context(), &domain.Message{
+		FromType:      "agent",
+		FromID:        principal.Agent.ID,
+		ToAgentID:     target.ID,
+		SquadID:       target.SquadID,
+		Type:          messageType,
+		Payload:       messagePayload(req),
+		Status:        domain.MessagePending,
+		CorrelationID: strings.TrimSpace(req.CorrelationID),
+	})
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.syncAgentStatusFromPendingWork(r.Context(), target.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update target agent state")
+		return
+	}
+	s.recordAgentAudit(r, principal.Agent.ID, "message.send", "message", created.ID, target.SquadID, nil)
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) ackCurrentAgentMessage(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	updated, err := s.store.AckMessage(r.Context(), principal.Agent.ID, chi.URLParam(r, "messageID"))
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.syncAgentStatusFromPendingWork(r.Context(), principal.Agent.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update agent state")
+		return
+	}
+	s.recordAgentAudit(r, principal.Agent.ID, "message.ack", "message", updated.ID, updated.SquadID, nil)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) createAgentChatMessage(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.loadAccessibleAgent(w, r)
+	if !ok {
+		return
+	}
+	var req messageRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	messageType := req.Type
+	if messageType == "" {
+		messageType = domain.MessageConsult
+	}
+	if !messageType.Valid() {
+		writeError(w, http.StatusBadRequest, "bad_request", "type is invalid")
+		return
+	}
+	u := currentUser(r.Context())
+	created, err := s.store.CreateMessage(r.Context(), &domain.Message{
+		FromType:      "user",
+		FromID:        u.ID,
+		ToAgentID:     target.ID,
+		SquadID:       target.SquadID,
+		Type:          messageType,
+		Payload:       messagePayload(req),
+		Status:        domain.MessagePending,
+		CorrelationID: strings.TrimSpace(req.CorrelationID),
+	})
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.syncAgentStatusFromPendingWork(r.Context(), target.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update target agent state")
+		return
+	}
+	s.recordUserAudit(r, "message.create", "message", created.ID, target.SquadID, nil)
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) listAgentChatMessages(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.loadAccessibleAgent(w, r)
+	if !ok {
+		return
+	}
+	messages, err := s.store.ListAgentMessageHistory(r.Context(), target.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	u := currentUser(r.Context())
+	squad, err := s.store.GetSquad(r.Context(), target.SquadID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if squad.OwnerID != u.ID && u.Role != domain.RolePlatformAdmin {
+		filtered := []*domain.Message{}
+		for _, msg := range messages {
+			if msg.FromType == "user" && msg.FromID == u.ID {
+				filtered = append(filtered, msg)
+			}
+		}
+		messages = filtered
+	}
+	writeJSON(w, http.StatusOK, messages)
+}
+
+func messagePayload(req messageRequest) json.RawMessage {
+	if len(req.Payload) > 0 {
+		return defaultRawJSON(req.Payload, "{}")
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		return json.RawMessage(`{}`)
+	}
+	payload, err := json.Marshal(map[string]string{"message": req.Message})
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return payload
+}
+
 type agentRuntimeResource struct {
 	ResourceType domain.ResourceType `json:"resource_type"`
 	ResourceID   string              `json:"resource_id"`
@@ -1811,7 +1993,11 @@ func (s *Server) agentHasPendingWork(ctx context.Context, agentID string) (bool,
 			return true, nil
 		}
 	}
-	return false, nil
+	messages, err := s.store.ListPendingMessages(ctx, agentID)
+	if err != nil {
+		return false, err
+	}
+	return len(messages) > 0, nil
 }
 
 func (s *Server) setAgentStatusAndMirror(ctx context.Context, agentID string, status domain.AgentStatus) error {

@@ -126,6 +126,51 @@ type Task struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
+// MessageType identifies a queued agent collaboration message.
+type MessageType string
+
+const (
+	MessageConsult  MessageType = "consult"
+	MessageDelegate MessageType = "delegate"
+	MessageHandoff  MessageType = "handoff"
+	MessagePing     MessageType = "ping"
+	MessageReply    MessageType = "reply"
+)
+
+// Valid reports whether t is a known message type.
+func (t MessageType) Valid() bool {
+	switch t {
+	case MessageConsult, MessageDelegate, MessageHandoff, MessagePing, MessageReply:
+		return true
+	}
+	return false
+}
+
+// MessageStatus is the lifecycle state of an inbox message.
+type MessageStatus string
+
+const (
+	MessagePending   MessageStatus = "pending"
+	MessageDelivered MessageStatus = "delivered"
+	MessageExpired   MessageStatus = "expired"
+	MessageDead      MessageStatus = "dead"
+)
+
+// Message is a durable queued message for an agent inbox.
+type Message struct {
+	ID            string          `json:"id"`
+	FromType      string          `json:"from_type"` // "user" | "agent"
+	FromID        string          `json:"from_id"`
+	ToAgentID     string          `json:"to_agent_id"`
+	SquadID       string          `json:"squad_id"`
+	Type          MessageType     `json:"type"`
+	Payload       json.RawMessage `json:"payload"`
+	Status        MessageStatus   `json:"status"`
+	CorrelationID string          `json:"correlation_id,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	DeliveredAt   time.Time       `json:"delivered_at,omitempty"`
+}
+
 // Board is a squad's Kanban board (one per squad).
 type Board struct {
 	ID        string    `json:"id"`

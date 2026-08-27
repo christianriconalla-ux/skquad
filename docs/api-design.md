@@ -114,6 +114,9 @@ one-way verifier hash for runtime authentication.
 
 > Chat is a **lightweight, non-task** interaction. It does not reset the task
 > context. Enforced by access grants for non-owners.
+>
+> Current implementation: `POST` enqueues a durable pending message; `GET`
+> returns queued message history visible to the caller.
 
 ---
 
@@ -124,12 +127,16 @@ one-way verifier hash for runtime authentication.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/agents/me/messages` | Send a message (`{ to_id, type, payload }`). |
+| `POST` | `/api/v1/agents/me/messages` | Send a message (`{ to_agent_id, type, payload }`). |
 | `GET` | `/api/v1/agents/me/messages` | Get this agent's inbox (pending). |
 | `POST` | `/api/v1/agents/me/messages/:id/ack` | Acknowledge a delivered message. |
 
 - **Cross-squad** messages are rejected (and audited) without an access grant.
 - **Delegation / handoff** create a task on the target board + a ping.
+
+Current implementation covers durable message enqueue, pending inbox list,
+acknowledgement, audit, and pending-message wake signals. Automatic task
+creation for `delegate`/`handoff` is tracked as a later workflow slice.
 
 ---
 

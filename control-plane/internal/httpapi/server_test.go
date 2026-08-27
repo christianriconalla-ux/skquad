@@ -657,6 +657,148 @@ func TestAgentRuntimeAuthRejectsInvalidCredential(t *testing.T) {
 	require.Equal(t, domain.AgentError, currentAgent.Status)
 }
 
+func TestAgentMessagingInboxFlow(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Messaging Squad",
+	}, http.StatusCreated, &squad)
+
+	var sender domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Sender",
+	}, http.StatusCreated, &sender)
+	var recipient domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Recipient",
+	}, http.StatusCreated, &recipient)
+
+	var senderIdentity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+sender.ID+"/identity", nil, http.StatusCreated, &senderIdentity)
+	senderCredential := crWriter.credentialTokens[senderIdentity.CredentialRef]
+	var recipientIdentity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+recipient.ID+"/identity", nil, http.StatusCreated, &recipientIdentity)
+	recipientCredential := crWriter.credentialTokens[recipientIdentity.CredentialRef]
+
+	var sent domain.Message
+	doAgentJSON(t, handler, sender.ID, senderCredential, http.MethodPost, "/api/v1/agents/me/messages", map[string]any{
+		"to_agent_id": recipient.ID,
+		"type":        "consult",
+		"message":     "please review",
+	}, http.StatusCreated, &sent)
+	require.Equal(t, "agent", sent.FromType)
+	require.Equal(t, sender.ID, sent.FromID)
+	require.Equal(t, recipient.ID, sent.ToAgentID)
+	require.Equal(t, domain.MessageConsult, sent.Type)
+	require.Equal(t, domain.MessagePending, sent.Status)
+	require.JSONEq(t, `{"message":"please review"}`, string(sent.Payload))
+
+	var recipientState domain.Agent
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+recipient.ID, nil, http.StatusOK, &recipientState)
+	require.Equal(t, domain.AgentBusy, recipientState.Status)
+
+	var inbox []domain.Message
+	doAgentJSON(t, handler, recipient.ID, recipientCredential, http.MethodGet, "/api/v1/agents/me/messages", nil, http.StatusOK, &inbox)
+	require.Len(t, inbox, 1)
+	require.Equal(t, sent.ID, inbox[0].ID)
+
+	var acked domain.Message
+	doAgentJSON(t, handler, recipient.ID, recipientCredential, http.MethodPost, "/api/v1/agents/me/messages/"+sent.ID+"/ack", nil, http.StatusOK, &acked)
+	require.Equal(t, domain.MessageDelivered, acked.Status)
+	require.False(t, acked.DeliveredAt.IsZero())
+
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+recipient.ID, nil, http.StatusOK, &recipientState)
+	require.Equal(t, domain.AgentIdle, recipientState.Status)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "message.send")
+	require.Contains(t, auditActions(audit), "message.ack")
+}
+
+func TestAgentCrossSquadMessageRequiresGrant(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var sourceSquad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Source Squad",
+	}, http.StatusCreated, &sourceSquad)
+	var targetSquad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Target Squad",
+	}, http.StatusCreated, &targetSquad)
+
+	var sender domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+sourceSquad.ID+"/agents", map[string]any{
+		"name": "Sender",
+	}, http.StatusCreated, &sender)
+	var recipient domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+targetSquad.ID+"/agents", map[string]any{
+		"name": "Recipient",
+	}, http.StatusCreated, &recipient)
+
+	var senderIdentity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+sender.ID+"/identity", nil, http.StatusCreated, &senderIdentity)
+	senderCredential := crWriter.credentialTokens[senderIdentity.CredentialRef]
+
+	var denied map[string]map[string]string
+	doAgentJSON(t, handler, sender.ID, senderCredential, http.MethodPost, "/api/v1/agents/me/messages", map[string]any{
+		"to_agent_id": recipient.ID,
+		"type":        "ping",
+	}, http.StatusForbidden, &denied)
+	require.Equal(t, "forbidden", denied["error"]["code"])
+
+	var grant domain.AccessGrant
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+targetSquad.ID+"/access-grants", map[string]any{
+		"grantee_type": "agent",
+		"grantee_id":   sender.ID,
+		"permissions":  "talk",
+	}, http.StatusCreated, &grant)
+
+	var sent domain.Message
+	doAgentJSON(t, handler, sender.ID, senderCredential, http.MethodPost, "/api/v1/agents/me/messages", map[string]any{
+		"to_agent_id": recipient.ID,
+		"type":        "ping",
+	}, http.StatusCreated, &sent)
+	require.Equal(t, targetSquad.ID, sent.SquadID)
+	require.Equal(t, domain.MessagePing, sent.Type)
+}
+
+func TestUserChatCreatesAgentMessage(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Chat Squad",
+	}, http.StatusCreated, &squad)
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Chat Agent",
+	}, http.StatusCreated, &agent)
+
+	var sent domain.Message
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/chat", map[string]any{
+		"message": "hello agent",
+	}, http.StatusCreated, &sent)
+	require.Equal(t, "user", sent.FromType)
+	require.Equal(t, agent.ID, sent.ToAgentID)
+	require.Equal(t, domain.MessagePending, sent.Status)
+
+	var history []domain.Message
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID+"/chat", nil, http.StatusOK, &history)
+	require.Len(t, history, 1)
+	require.Equal(t, sent.ID, history[0].ID)
+}
+
 func testConfig() *config.Config {
 	return &config.Config{
 		Addr:               ":0",

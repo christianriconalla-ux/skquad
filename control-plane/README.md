@@ -58,8 +58,10 @@ Implemented slice:
   secret references
 - Agent registry permission list/set endpoints
 - Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
-  granted active resource discovery, task start/complete/block, and status
-  heartbeats
+  granted active resource discovery, task start/complete/block, queued message
+  send/list/ack, and status heartbeats
+- User-facing agent chat endpoints that enqueue durable messages for owned or
+  granted agents
 - Board retrieval and task create/update/move/delete
 - Access grant create/list/delete
 - LLM provider registry create/list/get/update/deprecate
@@ -79,8 +81,9 @@ Implemented slice:
 - Platform-admin authorization for registry writes
 - Agent credential auth for runtime endpoints using one-way credential verifier
   hashes, with credential-ref matching retained only for old rows without hashes
-- Assigned `todo`/`in-progress` task state mirrored into the `Agent` CR so the
-  operator can scale an agent up or keep it warm while work remains
+- Assigned `todo`/`in-progress` task state and pending inbox messages mirrored
+  into the `Agent` CR so the operator can scale an agent up or keep it warm
+  while work remains
 
-Next slices are message/memory schema alignment, agent collaboration APIs, and
-runtime plugin/context integration.
+Next slices are runtime inbox draining, memory integration, and runtime
+plugin/context integration.

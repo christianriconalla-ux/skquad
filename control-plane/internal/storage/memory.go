@@ -33,6 +33,7 @@ type MemoryStore struct {
 	metering      map[string]*domain.MeteringEvent
 	auditLog      map[string]*domain.AuditEntry
 	tasks         map[string]*domain.Task
+	messages      map[string]*domain.Message
 }
 
 // NewMemoryStore creates an empty development store.
@@ -53,6 +54,7 @@ func NewMemoryStore() *MemoryStore {
 		metering:      map[string]*domain.MeteringEvent{},
 		auditLog:      map[string]*domain.AuditEntry{},
 		tasks:         map[string]*domain.Task{},
+		messages:      map[string]*domain.Message{},
 	}
 }
 
@@ -916,6 +918,76 @@ func (m *MemoryStore) ClaimNextTask(_ context.Context, agentID string) (*domain.
 	return cloneTask(candidate), nil
 }
 
+func (m *MemoryStore) CreateMessage(_ context.Context, msg *domain.Message) (*domain.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, ok := m.agents[msg.ToAgentID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	created := cloneMessage(msg)
+	created.ID = uuid.NewString()
+	created.SquadID = target.SquadID
+	if len(created.Payload) == 0 {
+		created.Payload = []byte(`{}`)
+	}
+	if created.Type == "" {
+		created.Type = domain.MessageConsult
+	}
+	if created.Status == "" {
+		created.Status = domain.MessagePending
+	}
+	created.CreatedAt = time.Now().UTC()
+	m.messages[created.ID] = created
+	return cloneMessage(created), nil
+}
+
+func (m *MemoryStore) ListPendingMessages(_ context.Context, agentID string) ([]*domain.Message, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return nil, ErrNotFound
+	}
+	out := []*domain.Message{}
+	for _, msg := range m.messages {
+		if msg.ToAgentID == agentID && msg.Status == domain.MessagePending {
+			out = append(out, cloneMessage(msg))
+		}
+	}
+	sortMessages(out)
+	return out, nil
+}
+
+func (m *MemoryStore) ListAgentMessageHistory(_ context.Context, agentID string) ([]*domain.Message, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return nil, ErrNotFound
+	}
+	out := []*domain.Message{}
+	for _, msg := range m.messages {
+		if msg.ToAgentID == agentID {
+			out = append(out, cloneMessage(msg))
+		}
+	}
+	sortMessages(out)
+	return out, nil
+}
+
+func (m *MemoryStore) AckMessage(_ context.Context, agentID string, messageID string) (*domain.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	msg, ok := m.messages[messageID]
+	if !ok || msg.ToAgentID != agentID {
+		return nil, ErrNotFound
+	}
+	if msg.Status == domain.MessagePending {
+		msg.Status = domain.MessageDelivered
+		msg.DeliveredAt = time.Now().UTC()
+	}
+	return cloneMessage(msg), nil
+}
+
 func (m *MemoryStore) nextTaskPosition(boardID string, status domain.TaskStatus) int {
 	next := 1
 	for _, task := range m.tasks {
@@ -924,6 +996,18 @@ func (m *MemoryStore) nextTaskPosition(boardID string, status domain.TaskStatus)
 		}
 	}
 	return next
+}
+
+func sortMessages(messages []*domain.Message) {
+	slices.SortFunc(messages, func(a, b *domain.Message) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			if a.CreatedAt.Before(b.CreatedAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 }
 
 func cloneUser(u *domain.User) *domain.User {
@@ -973,6 +1057,15 @@ func cloneTask(t *domain.Task) *domain.Task {
 		return nil
 	}
 	v := *t
+	return &v
+}
+
+func cloneMessage(m *domain.Message) *domain.Message {
+	if m == nil {
+		return nil
+	}
+	v := *m
+	v.Payload = append([]byte(nil), m.Payload...)
 	return &v
 }
 
