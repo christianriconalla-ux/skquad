@@ -9,12 +9,23 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    email       text NOT NULL UNIQUE,
+    oidc_issuer text,
+    oidc_subject text,
+    email       text NOT NULL,
+    email_verified boolean NOT NULL DEFAULT false,
     name        text NOT NULL DEFAULT '',
     role        text NOT NULL DEFAULT 'user'
                 CHECK (role IN ('platform_admin','user')),
     created_at  timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_issuer text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_subject text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject
+    ON users(oidc_issuer, oidc_subject)
+    WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 -- ---------------------------------------------------------------------------
 -- Squads (1 : 1 namespace, 1 : 1 board, 1 : * agents)

@@ -134,14 +134,58 @@ func TestOIDCAuthProvisionsUser(t *testing.T) {
 	cfg := testConfig()
 	cfg.AuthMode = config.AuthOIDC
 	handler := NewWithOIDCAuthenticator(cfg, storage.NewMemoryStore(), fakeOIDC{
-		profile: &auth.Profile{Email: "User@Example.com", Name: "OIDC User"},
+		profile: &auth.Profile{
+			Issuer:        "https://issuer.example.com",
+			Subject:       "subject-1",
+			Email:         "User@Example.com",
+			EmailVerified: true,
+			Name:          "OIDC User",
+		},
 	})
 
 	var user domain.User
 	doJSON(t, handler, http.MethodGet, "/api/v1/auth/me", nil, http.StatusOK, &user)
 	require.Equal(t, "user@example.com", user.Email)
+	require.Equal(t, "https://issuer.example.com", user.OIDCIssuer)
+	require.Equal(t, "subject-1", user.OIDCSubject)
+	require.True(t, user.EmailVerified)
 	require.Equal(t, "OIDC User", user.Name)
 	require.Equal(t, domain.RoleUser, user.Role)
+}
+
+func TestOIDCAuthKeysUsersByIssuerAndSubject(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.AuthMode = config.AuthOIDC
+	store := storage.NewMemoryStore()
+	profiles := headerOIDC{
+		"Bearer first": {
+			Issuer:        "https://issuer.example.com",
+			Subject:       "subject-a",
+			Email:         "shared@example.com",
+			EmailVerified: true,
+			Name:          "First",
+		},
+		"Bearer second": {
+			Issuer:        "https://issuer.example.com",
+			Subject:       "subject-b",
+			Email:         "shared@example.com",
+			EmailVerified: true,
+			Name:          "Second",
+		},
+	}
+	handler := NewWithOIDCAuthenticator(cfg, store, profiles)
+
+	var first domain.User
+	doJSONAuth(t, handler, "Bearer first", http.MethodGet, "/api/v1/auth/me", nil, http.StatusOK, &first)
+	var second domain.User
+	doJSONAuth(t, handler, "Bearer second", http.MethodGet, "/api/v1/auth/me", nil, http.StatusOK, &second)
+
+	require.NotEqual(t, first.ID, second.ID)
+	require.Equal(t, first.Email, second.Email)
+	require.Equal(t, "subject-a", first.OIDCSubject)
+	require.Equal(t, "subject-b", second.OIDCSubject)
 }
 
 func TestOIDCAuthRejectsInvalidBearer(t *testing.T) {
@@ -173,6 +217,10 @@ func TestAccessGrantAllowsReadButNotWrite(t *testing.T) {
 	doJSONAuth(t, handler, "Bearer owner", http.MethodPost, "/api/v1/squads", map[string]any{
 		"name": "Shared Squad",
 	}, http.StatusCreated, &squad)
+	var agent domain.Agent
+	doJSONAuth(t, handler, "Bearer owner", http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Shared Agent",
+	}, http.StatusCreated, &agent)
 
 	var viewer domain.User
 	doJSONAuth(t, handler, "Bearer viewer", http.MethodGet, "/api/v1/auth/me", nil, http.StatusOK, &viewer)
@@ -188,15 +236,78 @@ func TestAccessGrantAllowsReadButNotWrite(t *testing.T) {
 	}, http.StatusCreated, &grant)
 	require.Equal(t, viewer.ID, grant.GranteeID)
 
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodGet, "/api/v1/squads/"+squad.ID, nil, http.StatusForbidden, &denied)
+
+	var sent domain.Message
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodPost, "/api/v1/agents/"+agent.ID+"/chat", map[string]any{
+		"message": "talk grant allows chat",
+	}, http.StatusCreated, &sent)
+	require.Equal(t, viewer.ID, sent.FromID)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/access-grants/"+grant.ID, nil)
+	req.Header.Set("Authorization", "Bearer owner")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	doJSONAuth(t, handler, "Bearer owner", http.MethodPost, "/api/v1/squads/"+squad.ID+"/access-grants", map[string]any{
+		"grantee_type": "user",
+		"grantee_id":   viewer.ID,
+		"permissions":  "read",
+	}, http.StatusCreated, &grant)
+
 	var readable domain.Squad
 	doJSONAuth(t, handler, "Bearer viewer", http.MethodGet, "/api/v1/squads/"+squad.ID, nil, http.StatusOK, &readable)
 	require.Equal(t, squad.ID, readable.ID)
 
 	var forbidden map[string]map[string]string
+	var history []domain.Message
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodGet, "/api/v1/agents/"+agent.ID+"/chat", nil, http.StatusOK, &history)
+	require.Len(t, history, 1)
+
+	doJSONAuth(t, handler, "Bearer viewer", http.MethodPost, "/api/v1/agents/"+agent.ID+"/chat", map[string]any{
+		"message": "read grant cannot chat",
+	}, http.StatusForbidden, &forbidden)
+
 	doJSONAuth(t, handler, "Bearer viewer", http.MethodPatch, "/api/v1/squads/"+squad.ID, map[string]any{
 		"mission": "take over",
 	}, http.StatusForbidden, &forbidden)
 	require.Equal(t, "forbidden", forbidden["error"]["code"])
+
+	var audit []domain.AuditEntry
+	doJSONAuth(t, handler, "Bearer owner", http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "access.denied")
+}
+
+func TestAccessGrantCreateFailsClosedWhenAuditFails(t *testing.T) {
+	t.Parallel()
+
+	base := storage.NewMemoryStore()
+	store := failingAuditStore{MemoryStore: base}
+	handler := New(testConfig(), store)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Audit Required Squad",
+	}, http.StatusCreated, &squad)
+	viewer, err := base.UpsertUser(context.Background(), &domain.User{
+		Email: "viewer@example.com",
+		Name:  "Viewer",
+		Role:  domain.RoleUser,
+	})
+	require.NoError(t, err)
+
+	var body map[string]map[string]string
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/access-grants", map[string]any{
+		"grantee_type": "user",
+		"grantee_id":   viewer.ID,
+		"permissions":  "read",
+	}, http.StatusInternalServerError, &body)
+	require.Equal(t, "internal", body["error"]["code"])
+
+	grants, err := base.ListGrants(context.Background(), squad.ID)
+	require.NoError(t, err)
+	require.Empty(t, grants)
 }
 
 func TestRegistryRequiresPlatformAdminForWrites(t *testing.T) {
@@ -1269,6 +1380,15 @@ func TestAgentCrossSquadMessageRequiresGrant(t *testing.T) {
 	}, http.StatusCreated, &sent)
 	require.Equal(t, targetSquad.ID, sent.SquadID)
 	require.Equal(t, domain.MessagePing, sent.Type)
+
+	doAgentJSON(t, handler, sender.ID, senderCredential, http.MethodPost, "/api/v1/agents/me/messages", map[string]any{
+		"to_agent_id": recipient.ID,
+		"type":        "delegate",
+	}, http.StatusForbidden, &denied)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+targetSquad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "message.denied")
 }
 
 func TestUserChatCreatesAgentMessage(t *testing.T) {
@@ -1425,6 +1545,14 @@ func (h headerOIDC) Authenticate(_ context.Context, authorization string) (*auth
 		return nil, auth.ErrUnauthorized
 	}
 	return profile, nil
+}
+
+type failingAuditStore struct {
+	*storage.MemoryStore
+}
+
+func (failingAuditStore) RecordAudit(context.Context, *domain.AuditEntry) error {
+	return errors.New("audit unavailable")
 }
 
 func auditActions(entries []domain.AuditEntry) []string {

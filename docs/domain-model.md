@@ -28,8 +28,11 @@ erDiagram
 
     USER {
         uuid id PK
-        string email UK
-        string display_name
+        string oidc_issuer
+        string oidc_subject
+        string email
+        bool email_verified
+        string name
         string role "platform_admin | user"
         timestamptz created_at
     }
@@ -88,7 +91,7 @@ erDiagram
         uuid squad_id FK
         string grantee_type "user | agent"
         uuid grantee_id
-        jsonb permissions "e.g. talk_to_agents"
+        string permissions "e.g. read,talk,ping,add_task"
         uuid granted_by FK
         timestamptz created_at
     }

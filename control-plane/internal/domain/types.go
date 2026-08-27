@@ -23,11 +23,14 @@ func (r Role) Valid() bool {
 
 // User is a human principal authenticated via OIDC.
 type User struct {
-	ID        string    `json:"id"`
-	Email     string    `json:"email"`
-	Name      string    `json:"name"`
-	Role      Role      `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	OIDCIssuer    string    `json:"oidc_issuer,omitempty"`
+	OIDCSubject   string    `json:"oidc_subject,omitempty"`
+	Email         string    `json:"email"`
+	EmailVerified bool      `json:"email_verified"`
+	Name          string    `json:"name"`
+	Role          Role      `json:"role"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // SquadStatus is the lifecycle state of a squad.

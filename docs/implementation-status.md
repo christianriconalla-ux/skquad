@@ -24,7 +24,7 @@ These items are not implemented yet and must not be implied as production-ready:
 | Gap | Tracking |
 | --- | --- |
 | Automatic task materialization for `delegate`/`handoff` messages and richer consult/reply workflows. | Follow-up after Kanbunny `9a4ec0f0-af8c-4eac-b27f-8fc328ced0a4` - `Add message retry, expiry, and dead-letter handling`. |
-| Stable OIDC `(issuer, subject)` user identity, fine-grained access-grant scope enforcement, and stronger audit guarantees. | Kanbunny `23ea081f-37d8-46cd-a379-ec4147826179` - `Harden OIDC identity, grant scopes, and audit guarantees`. |
+| Broader transactional audit guarantees across all significant mutation paths. Current implementation fail-closes access-grant and agent-permission mutations after recording a required pre-mutation audit event, while many other audit writes remain best-effort. | Follow-up hardening after Kanbunny `23ea081f-37d8-46cd-a379-ec4147826179` - `Harden OIDC identity, grant scopes, and audit guarantees`. |
 | Reduced API Secret RBAC and more precise agent egress/network policy generation. | Kanbunny `a4fc5852-3e86-43bd-ba3c-73a8a2f74132` - `Reduce API Secret RBAC and agent network-policy blast radius`. |
 | Immutable migration ledger, migration locking, and safer multi-replica startup migrations. | Kanbunny `c8f6bb7d-d8a5-43c5-b814-52e8da5890d1` - `Version database migrations with ledger and lock`. |
 | Semantic memory embeddings, trust labels, distilled memory, and provenance-aware retrieval. | Kanbunny `da19b194-d738-4d95-84dc-a8287d8e2e3f` - `Harden semantic memory with embeddings and trust boundaries`. |

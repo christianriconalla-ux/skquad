@@ -115,8 +115,8 @@
   - Grants are **explicit, scoped** (specific permissions), and **revocable**.
   - Cross-squad messages/task creation are **enforced + audited**.
   - Owners can **revoke** grants; revocation takes effect on the next check.
-  - **Least privilege** — grant only what's needed (e.g. `talk_to_agents` vs.
-    `add_task`).
+  - **Least privilege** — grant only what's needed (e.g. `read`, `talk`,
+    `ping`, or `add_task`).
 
 ### T7. Supply chain (malicious plugin)
 - **Threat:** A malicious or compromised **plugin** (skill/tool/connector)

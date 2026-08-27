@@ -254,9 +254,12 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				return
 			}
 			user, err := s.store.UpsertUser(r.Context(), &domain.User{
-				Email: profile.Email,
-				Name:  profile.Name,
-				Role:  domain.RoleUser,
+				OIDCIssuer:    profile.Issuer,
+				OIDCSubject:   profile.Subject,
+				Email:         profile.Email,
+				EmailVerified: profile.EmailVerified,
+				Name:          profile.Name,
+				Role:          domain.RoleUser,
 			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to load authenticated principal")
@@ -816,12 +819,15 @@ func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 		Permissions: req.Permissions,
 		GrantedBy:   u.ID,
 	}
+	if err := s.recordUserAuditRequired(r, "access_grant.create", "access_grant", req.GranteeID, squad.ID, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to audit access grant creation")
+		return
+	}
 	created, err := s.store.CreateGrant(r.Context(), grant)
 	if err != nil {
 		writeStorageError(w, err)
 		return
 	}
-	s.recordUserAudit(r, "access_grant.create", "access_grant", created.ID, squad.ID, nil)
 	writeJSON(w, http.StatusCreated, created)
 }
 
@@ -847,11 +853,14 @@ func (s *Server) deleteGrant(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.ensureSquadAccess(w, r, grant.SquadID, true); !ok {
 		return
 	}
+	if err := s.recordUserAuditRequired(r, "access_grant.delete", "access_grant", grant.ID, grant.SquadID, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to audit access grant deletion")
+		return
+	}
 	if err := s.store.RevokeGrant(r.Context(), grant.ID); err != nil {
 		writeStorageError(w, err)
 		return
 	}
-	s.recordUserAudit(r, "access_grant.delete", "access_grant", grant.ID, grant.SquadID, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1205,6 +1214,11 @@ func (s *Server) setAgentPermissions(w http.ResponseWriter, r *http.Request) {
 			GrantedBy:    u.ID,
 		})
 	}
+	metadata, _ := json.Marshal(map[string]int{"count": len(perms)})
+	if err := s.recordUserAuditRequired(r, "agent_permissions.set", "agent", agent.ID, agent.SquadID, metadata); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to audit agent permission update")
+		return
+	}
 	if err := s.store.SetAgentPermissions(r.Context(), agent.ID, perms); err != nil {
 		writeStorageError(w, err)
 		return
@@ -1214,8 +1228,6 @@ func (s *Server) setAgentPermissions(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
-	metadata, _ := json.Marshal(map[string]int{"count": len(current)})
-	s.recordUserAudit(r, "agent_permissions.set", "agent", agent.ID, agent.SquadID, metadata)
 	writeJSON(w, http.StatusOK, current)
 }
 
@@ -1592,12 +1604,14 @@ func (s *Server) createCurrentAgentMessage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if target.SquadID != principal.Agent.SquadID {
-		ok, err := s.store.AgentMayMessageSquad(r.Context(), principal.Agent.ID, target.SquadID)
+		messageAction := requiredMessageAction(messageType)
+		ok, err := s.store.AgentMayMessageSquad(r.Context(), principal.Agent.ID, target.SquadID, messageAction)
 		if err != nil {
 			writeStorageError(w, err)
 			return
 		}
 		if !ok {
+			s.recordAgentAudit(r, principal.Agent.ID, "message.denied", "agent", target.ID, target.SquadID, nil)
 			writeError(w, http.StatusForbidden, "forbidden", "agent cannot message the target squad")
 			return
 		}
@@ -1664,7 +1678,7 @@ func (s *Server) failCurrentAgentMessage(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) createAgentChatMessage(w http.ResponseWriter, r *http.Request) {
-	target, ok := s.loadAccessibleAgent(w, r)
+	target, ok := s.loadAgentForAction(w, r, "talk")
 	if !ok {
 		return
 	}
@@ -1752,6 +1766,17 @@ func messageExpiresAt(req messageRequest) time.Time {
 		return time.Time{}
 	}
 	return time.Now().UTC().Add(time.Duration(req.TTLSeconds) * time.Second)
+}
+
+func requiredMessageAction(messageType domain.MessageType) string {
+	switch messageType {
+	case domain.MessagePing:
+		return "ping"
+	case domain.MessageDelegate, domain.MessageHandoff:
+		return "add_task"
+	default:
+		return "talk"
+	}
 }
 
 type agentRuntimeResource struct {
@@ -2179,12 +2204,13 @@ func (s *Server) loadAccessibleSquad(w http.ResponseWriter, r *http.Request) (*d
 	if squad.OwnerID == u.ID || u.Role == domain.RolePlatformAdmin {
 		return squad, true
 	}
-	ok, err := s.store.UserMayAccessSquad(r.Context(), u.ID, squad.ID)
+	ok, err := s.store.UserMayAccessSquad(r.Context(), u.ID, squad.ID, "read")
 	if err != nil {
 		writeStorageError(w, err)
 		return nil, false
 	}
 	if !ok {
+		s.recordUserAudit(r, "access.denied", "squad", squad.ID, squad.ID, nil)
 		writeError(w, http.StatusForbidden, "forbidden", "you do not have access to this squad")
 		return nil, false
 	}
@@ -2192,12 +2218,16 @@ func (s *Server) loadAccessibleSquad(w http.ResponseWriter, r *http.Request) (*d
 }
 
 func (s *Server) loadAccessibleAgent(w http.ResponseWriter, r *http.Request) (*domain.Agent, bool) {
+	return s.loadAgentForAction(w, r, "read")
+}
+
+func (s *Server) loadAgentForAction(w http.ResponseWriter, r *http.Request, action string) (*domain.Agent, bool) {
 	agent, err := s.store.GetAgent(r.Context(), chi.URLParam(r, "agentID"))
 	if err != nil {
 		writeStorageError(w, err)
 		return nil, false
 	}
-	if _, ok := s.ensureSquadAccess(w, r, agent.SquadID, false); !ok {
+	if _, ok := s.ensureSquadActionAccess(w, r, agent.SquadID, action, false); !ok {
 		return nil, false
 	}
 	return agent, true
@@ -2240,6 +2270,10 @@ func (s *Server) loadOwnedTask(w http.ResponseWriter, r *http.Request) (*domain.
 }
 
 func (s *Server) ensureSquadAccess(w http.ResponseWriter, r *http.Request, squadID string, ownerOnly bool) (*domain.Squad, bool) {
+	return s.ensureSquadActionAccess(w, r, squadID, "read", ownerOnly)
+}
+
+func (s *Server) ensureSquadActionAccess(w http.ResponseWriter, r *http.Request, squadID string, action string, ownerOnly bool) (*domain.Squad, bool) {
 	squad, err := s.store.GetSquad(r.Context(), squadID)
 	if err != nil {
 		writeStorageError(w, err)
@@ -2250,7 +2284,7 @@ func (s *Server) ensureSquadAccess(w http.ResponseWriter, r *http.Request, squad
 		return squad, true
 	}
 	if !ownerOnly {
-		ok, err := s.store.UserMayAccessSquad(r.Context(), u.ID, squad.ID)
+		ok, err := s.store.UserMayAccessSquad(r.Context(), u.ID, squad.ID, action)
 		if err != nil {
 			writeStorageError(w, err)
 			return nil, false
@@ -2260,8 +2294,10 @@ func (s *Server) ensureSquadAccess(w http.ResponseWriter, r *http.Request, squad
 		}
 	}
 	if ownerOnly {
+		s.recordUserAudit(r, "access.denied", "squad", squad.ID, squad.ID, nil)
 		writeError(w, http.StatusForbidden, "forbidden", "you do not own this squad")
 	} else {
+		s.recordUserAudit(r, "access.denied", "squad", squad.ID, squad.ID, nil)
 		writeError(w, http.StatusForbidden, "forbidden", "you do not have access to this squad")
 	}
 	return nil, false
@@ -2277,19 +2313,24 @@ func (s *Server) ensureOwnedOrAdminSquad(w http.ResponseWriter, r *http.Request,
 	if squad.OwnerID == u.ID || u.Role == domain.RolePlatformAdmin {
 		return squad, true
 	}
+	s.recordUserAudit(r, "access.denied", "squad", squad.ID, squad.ID, nil)
 	writeError(w, http.StatusForbidden, "forbidden", "you do not own this squad")
 	return nil, false
 }
 
 func (s *Server) recordUserAudit(r *http.Request, action, resourceType, resourceID, squadID string, metadata json.RawMessage) {
+	_ = s.recordUserAuditRequired(r, action, resourceType, resourceID, squadID, metadata)
+}
+
+func (s *Server) recordUserAuditRequired(r *http.Request, action, resourceType, resourceID, squadID string, metadata json.RawMessage) error {
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
 	}
 	u := currentUser(r.Context())
 	if u == nil {
-		return
+		return nil
 	}
-	_ = s.store.RecordAudit(r.Context(), &domain.AuditEntry{
+	return s.store.RecordAudit(r.Context(), &domain.AuditEntry{
 		ActorType:    "user",
 		ActorID:      u.ID,
 		Action:       action,

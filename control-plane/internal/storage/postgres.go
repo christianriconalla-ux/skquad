@@ -128,7 +128,7 @@ func getAgentIdentityTx(ctx context.Context, tx pgx.Tx, agentID string) (*domain
 
 func (p *PostgresStore) GetUser(ctx context.Context, id string) (*domain.User, error) {
 	row := p.pool.QueryRow(ctx, `
-		SELECT id::text, email, name, role, created_at
+		SELECT id::text, coalesce(oidc_issuer, ''), coalesce(oidc_subject, ''), email, email_verified, name, role, created_at
 		FROM users
 		WHERE id = $1
 	`, id)
@@ -137,9 +137,11 @@ func (p *PostgresStore) GetUser(ctx context.Context, id string) (*domain.User, e
 
 func (p *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	row := p.pool.QueryRow(ctx, `
-		SELECT id::text, email, name, role, created_at
+		SELECT id::text, coalesce(oidc_issuer, ''), coalesce(oidc_subject, ''), email, email_verified, name, role, created_at
 		FROM users
 		WHERE email = lower($1)
+		ORDER BY created_at
+		LIMIT 1
 	`, email)
 	return scanUser(row)
 }
@@ -149,13 +151,40 @@ func (p *PostgresStore) UpsertUser(ctx context.Context, u *domain.User) (*domain
 	if role == "" {
 		role = domain.RoleUser
 	}
+	issuer := strings.TrimSpace(u.OIDCIssuer)
+	subject := strings.TrimSpace(u.OIDCSubject)
+	if issuer == "" || subject == "" {
+		existing, err := p.GetUserByEmail(ctx, u.Email)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+		if err == nil {
+			row := p.pool.QueryRow(ctx, `
+				UPDATE users
+				SET name = $2
+				WHERE id = $1
+				RETURNING id::text, coalesce(oidc_issuer, ''), coalesce(oidc_subject, ''), email, email_verified, name, role, created_at
+			`, existing.ID, u.Name)
+			return scanUser(row)
+		}
+		row := p.pool.QueryRow(ctx, `
+			INSERT INTO users (email, email_verified, name, role)
+			VALUES (lower($1), $2, $3, $4)
+			RETURNING id::text, coalesce(oidc_issuer, ''), coalesce(oidc_subject, ''), email, email_verified, name, role, created_at
+		`, u.Email, u.EmailVerified, u.Name, role)
+		return scanUser(row)
+	}
 	row := p.pool.QueryRow(ctx, `
-		INSERT INTO users (email, name, role)
-		VALUES (lower($1), $2, $3)
-		ON CONFLICT (email) DO UPDATE
-		SET name = EXCLUDED.name
-		RETURNING id::text, email, name, role, created_at
-	`, u.Email, u.Name, role)
+		INSERT INTO users (oidc_issuer, oidc_subject, email, email_verified, name, role)
+		VALUES (nullif($1, ''), nullif($2, ''), lower($3), $4, $5, $6)
+		ON CONFLICT (oidc_issuer, oidc_subject)
+		WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL
+		DO UPDATE
+		SET email = EXCLUDED.email,
+		    email_verified = EXCLUDED.email_verified,
+		    name = EXCLUDED.name
+		RETURNING id::text, coalesce(oidc_issuer, ''), coalesce(oidc_subject, ''), email, email_verified, name, role, created_at
+	`, issuer, subject, u.Email, u.EmailVerified, u.Name, role)
 	return scanUser(row)
 }
 
@@ -176,7 +205,7 @@ func (p *PostgresStore) SetUserRole(ctx context.Context, id string, role domain.
 
 func (p *PostgresStore) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id::text, email, name, role, created_at
+		SELECT id::text, coalesce(oidc_issuer, ''), coalesce(oidc_subject, ''), email, email_verified, name, role, created_at
 		FROM users
 		ORDER BY email
 	`)
@@ -622,7 +651,7 @@ func (p *PostgresStore) ListGrants(ctx context.Context, squadID string) ([]*doma
 	return grants, mapPgErr(rows.Err())
 }
 
-func (p *PostgresStore) UserMayAccessSquad(ctx context.Context, userID, squadID string) (bool, error) {
+func (p *PostgresStore) UserMayAccessSquad(ctx context.Context, userID, squadID string, action string) (bool, error) {
 	var allowed bool
 	err := p.pool.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -635,12 +664,18 @@ func (p *PostgresStore) UserMayAccessSquad(ctx context.Context, userID, squadID 
 			WHERE squad_id = $2
 			  AND grantee_type = 'user'
 			  AND grantee_id = $1
+			  AND EXISTS (
+			      SELECT 1
+			      FROM regexp_split_to_table(permissions, '\s*,\s*') AS perm
+			      WHERE lower(perm) IN ('*', 'admin', lower($3))
+			         OR (lower($3) = 'ping' AND lower(perm) = 'talk')
+			  )
 		)
-	`, userID, squadID).Scan(&allowed)
+	`, userID, squadID, action).Scan(&allowed)
 	return allowed, mapPgErr(err)
 }
 
-func (p *PostgresStore) AgentMayMessageSquad(ctx context.Context, agentID, squadID string) (bool, error) {
+func (p *PostgresStore) AgentMayMessageSquad(ctx context.Context, agentID, squadID string, action string) (bool, error) {
 	var allowed bool
 	err := p.pool.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -649,8 +684,14 @@ func (p *PostgresStore) AgentMayMessageSquad(ctx context.Context, agentID, squad
 			WHERE squad_id = $2
 			  AND grantee_type = 'agent'
 			  AND grantee_id = $1
+			  AND EXISTS (
+			      SELECT 1
+			      FROM regexp_split_to_table(permissions, '\s*,\s*') AS perm
+			      WHERE lower(perm) IN ('*', 'admin', lower($3))
+			         OR (lower($3) = 'ping' AND lower(perm) = 'talk')
+			  )
 		)
-	`, agentID, squadID).Scan(&allowed)
+	`, agentID, squadID, action).Scan(&allowed)
 	return allowed, mapPgErr(err)
 }
 
@@ -1563,7 +1604,16 @@ type scanner interface {
 
 func scanUser(row scanner) (*domain.User, error) {
 	var u domain.User
-	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt); err != nil {
+	if err := row.Scan(
+		&u.ID,
+		&u.OIDCIssuer,
+		&u.OIDCSubject,
+		&u.Email,
+		&u.EmailVerified,
+		&u.Name,
+		&u.Role,
+		&u.CreatedAt,
+	); err != nil {
 		return nil, mapPgErr(err)
 	}
 	return &u, nil

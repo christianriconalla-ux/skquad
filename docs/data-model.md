@@ -28,16 +28,19 @@
 ```sql
 CREATE TABLE users (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    email         text NOT NULL UNIQUE,
-    display_name  text,
+    oidc_issuer   text,
+    oidc_subject  text,
+    email         text NOT NULL,
+    email_verified boolean NOT NULL DEFAULT false,
+    name          text NOT NULL DEFAULT '',
     role          text NOT NULL DEFAULT 'user'
                   CHECK (role IN ('platform_admin', 'user')),
-    oidc_subject  text UNIQUE,          -- IdP subject
-    status        text NOT NULL DEFAULT 'active'
-                  CHECK (status IN ('active', 'deactivated')),
-    created_at    timestamptz NOT NULL DEFAULT now(),
-    updated_at    timestamptz NOT NULL DEFAULT now()
+    created_at    timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX idx_users_oidc_subject
+    ON users(oidc_issuer, oidc_subject)
+    WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL;
+CREATE INDEX idx_users_email ON users(email);
 
 CREATE TABLE agent_identities (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -246,9 +249,8 @@ CREATE TABLE access_grants (
     squad_id      uuid NOT NULL REFERENCES squads(id) ON DELETE CASCADE,
     grantee_type  text NOT NULL CHECK (grantee_type IN ('user','agent')),
     grantee_id    uuid NOT NULL,        -- user id or agent id
-    permissions   jsonb NOT NULL DEFAULT '["talk_to_agents"]',
+    permissions   text NOT NULL DEFAULT 'talk',
     granted_by    uuid NOT NULL REFERENCES users(id),
-    status        text NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_access_grants_squad ON access_grants(squad_id);

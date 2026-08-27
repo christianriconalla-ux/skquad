@@ -5,13 +5,12 @@
 > skquad has **two kinds of principals**: **human users** (OIDC) and **agents**
 > (owner-created identities). Authorization is **two-layer RBAC**: **user RBAC**
 > (managed by the platform admin) and **agent permissions** (managed by the
-> squad owner). Significant actions are intended to be **audited**; the current
-> implementation records audit events for many mutation paths, with stronger
-> transactional guarantees still tracked as follow-up work.
+> squad owner). Significant actions are audited; security-sensitive grant and
+> agent-permission mutations fail closed when the required pre-mutation audit
+> event cannot be recorded.
 >
 > This is the intended security model. Remaining implementation gaps around
-> stable OIDC subjects, fine-grained grant scopes, audit guarantees, and RBAC
-> reduction are tracked in
+> broader transactional audit guarantees and RBAC reduction are tracked in
 > [`implementation-status.md`](implementation-status.md).
 
 ---
@@ -20,7 +19,7 @@
 
 | Principal | Identity | Credential | Created by |
 |-----------|----------|------------|------------|
-| **Human user** | OIDC subject (email) | OIDC session / JWT | OIDC IdP (first login) or platform admin |
+| **Human user** | OIDC issuer + subject | OIDC session / JWT | OIDC IdP (first login) or platform admin |
 | **Agent** | `AgentIdentity` (owner-created) | K8s secret (in squad namespace) + LLM gateway virtual key | Squad owner (platform-facilitated) |
 
 ---
@@ -29,8 +28,10 @@
 
 - Users authenticate via **OIDC** against a configured IdP (Keycloak, Okta,
   Azure AD, Google, …).
-- On first login, the **API server** provisions a `User` record (email, display
-  name) and assigns the default role (`user`).
+- On first login, the **API server** provisions a `User` record keyed by OIDC
+  issuer + subject. Email, email verification, and display name are profile
+  data and can change without changing the user's stable identity.
+- If the token includes `email_verified=false`, authentication is rejected.
 - The API server issues a short-lived **JWT** (or session) for subsequent
   requests. The JWT carries the user's **id** and **role(s)**.
 - The API server validates the JWT on every request (authN) and then applies
@@ -107,14 +108,14 @@ Squad owner → "Create agent identity" (one-click)
 - A **squad owner** can **grant** another **user** (or another squad's **agent**)
   the right to **talk to** the squad's agents.
 - An **`AccessGrant`** records: `squad_id`, `grantee_type` (user/agent),
-  `grantee_id`, `permissions` (e.g. `talk_to_agents`, `add_task`, `ping`),
+  `grantee_id`, `permissions` (e.g. `read`, `talk`, `add_task`, `ping`),
   `granted_by`, `created_at`.
 - **Enforcement:**
   - **User → agent chat:** the API server checks the grant before allowing a
     user to message an agent they don't own.
   - **Agent → agent (cross-squad):** the control plane checks the grant before
-    enqueuing a cross-squad message or allowing a task to be added to another
-    squad's board.
+    enqueuing a cross-squad message. Delegation and handoff require `add_task`
+    so later task-materialization workflow can reuse the same grant boundary.
 - Grants are **revocable**; revocation takes effect on the next check.
 
 ---

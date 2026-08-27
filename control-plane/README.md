@@ -32,7 +32,8 @@ applied at startup.
 
 Authentication defaults to `SKQUAD_AUTH_MODE=dev`. Set `SKQUAD_AUTH_MODE=oidc`
 with `SKQUAD_OIDC_ISSUER` and `SKQUAD_OIDC_AUDIENCE` to validate OIDC bearer
-JWTs and provision users from token claims.
+JWTs and provision users by stable OIDC issuer + subject. Email, name, and
+`email_verified` are treated as profile data.
 
 Kubernetes custom-resource writes are disabled by default. Set
 `SKQUAD_K8S_ENABLED=true` to start the outbox worker that mirrors squad/agent
@@ -75,7 +76,9 @@ Implemented slice:
   APIs, knowledge bases, and project workspaces
 - Metering reads for squad, agent, and platform-admin summary views
 - Audit log reads for squad owners and platform admins
-- Best-effort audit recording for control-plane mutations
+- Best-effort audit recording for most control-plane mutations; access-grant
+  and agent-permission mutations require a pre-mutation audit write and fail
+  closed if that write is unavailable
 - Durable Kubernetes outbox for `Squad`/`Agent` CR create/update/delete/status
   intents, including the generated squad namespace in `Squad.spec.namespace`
 - Consistent JSON error envelopes
@@ -87,8 +90,9 @@ Implemented slice:
   memory writes
 - Task execution attempts with worker IDs, active leases, fencing tokens, and
   terminal result summaries stored atomically with task status transitions
-- OIDC bearer JWT validation with first-login user provisioning
-- Owner/admin/granted-user read authorization for squad resources
+- OIDC bearer JWT validation with first-login user provisioning by issuer +
+  subject and rejection of explicitly unverified email claims
+- Owner/admin/granted-user scoped authorization for squad reads and user chat
 - Platform-admin authorization for registry writes
 - Agent credential auth for runtime endpoints using one-way credential verifier
   hashes, with credential-ref matching retained only for old rows without hashes

@@ -15,8 +15,11 @@ var ErrUnauthorized = errors.New("auth: unauthorized")
 
 // Profile is the normalized human user profile extracted from an OIDC token.
 type Profile struct {
-	Email string
-	Name  string
+	Issuer        string
+	Subject       string
+	Email         string
+	EmailVerified bool
+	Name          string
 }
 
 // OIDCAuthenticator validates OIDC bearer tokens.
@@ -49,14 +52,25 @@ func (a *OIDCAuthenticator) Authenticate(ctx context.Context, authorization stri
 
 	var claims struct {
 		Email             string `json:"email"`
+		EmailVerified     *bool  `json:"email_verified"`
 		Name              string `json:"name"`
 		PreferredUsername string `json:"preferred_username"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, ErrUnauthorized
 	}
+	if strings.TrimSpace(idToken.Issuer) == "" || strings.TrimSpace(idToken.Subject) == "" {
+		return nil, ErrUnauthorized
+	}
 	claims.Email = strings.TrimSpace(strings.ToLower(claims.Email))
 	if claims.Email == "" {
+		return nil, ErrUnauthorized
+	}
+	emailVerified := true
+	if claims.EmailVerified != nil {
+		emailVerified = *claims.EmailVerified
+	}
+	if !emailVerified {
 		return nil, ErrUnauthorized
 	}
 	name := strings.TrimSpace(claims.Name)
@@ -66,7 +80,13 @@ func (a *OIDCAuthenticator) Authenticate(ctx context.Context, authorization stri
 	if name == "" {
 		name = claims.Email
 	}
-	return &Profile{Email: claims.Email, Name: name}, nil
+	return &Profile{
+		Issuer:        strings.TrimSpace(idToken.Issuer),
+		Subject:       strings.TrimSpace(idToken.Subject),
+		Email:         claims.Email,
+		EmailVerified: emailVerified,
+		Name:          name,
+	}, nil
 }
 
 func bearerToken(authorization string) (string, bool) {

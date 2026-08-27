@@ -149,11 +149,11 @@ summary endpoints when the current user has access.
 
 | Screen | platform_admin | squad owner | granted user |
 |--------|:--------------:|:-----------:|:------------:|
-| Squad board | ✅ | ✅ (own) | ✅ (granted) |
+| Squad board | ✅ | ✅ (own) | ✅ (`read` grant) |
 | Agent panel (identity/permissions) | ✅ | ✅ (own) | — |
 | Squad settings (mission/operating model) | ✅ | ✅ (own) | — |
 | Access grants | ✅ | ✅ (own) | — |
-| Chat with agent | ✅ | ✅ (own) | ✅ (granted) |
+| Chat with agent | ✅ | ✅ (own) | ✅ (`talk` grant) |
 | Metering (squad) | ✅ | ✅ (own) | — |
 | Registry | ✅ | — | — |
 | Audit | ✅ (all) | ✅ (own) | — |

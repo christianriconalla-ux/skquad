@@ -139,10 +139,10 @@ type GrantStore interface {
 	GetGrant(ctx context.Context, id string) (*domain.AccessGrant, error)
 	RevokeGrant(ctx context.Context, id string) error
 	ListGrants(ctx context.Context, squadID string) ([]*domain.AccessGrant, error)
-	// UserMayAccessSquad reports whether user id may access squad (owner or grant).
-	UserMayAccessSquad(ctx context.Context, userID, squadID string) (bool, error)
-	// AgentMayMessageSquad reports whether agent id may message squad (grant).
-	AgentMayMessageSquad(ctx context.Context, agentID, squadID string) (bool, error)
+	// UserMayAccessSquad reports whether user id may access squad for the requested action.
+	UserMayAccessSquad(ctx context.Context, userID, squadID string, action string) (bool, error)
+	// AgentMayMessageSquad reports whether agent id may message squad for the requested action.
+	AgentMayMessageSquad(ctx context.Context, agentID, squadID string, action string) (bool, error)
 }
 
 // MeteringStore persists token-usage events.

@@ -28,6 +28,7 @@ type MemoryStore struct {
 
 	users         map[string]*domain.User
 	usersByEmail  map[string]string
+	usersByOIDC   map[string]string
 	squads        map[string]*domain.Squad
 	agents        map[string]*domain.Agent
 	identities    map[string]*domain.AgentIdentity
@@ -52,6 +53,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		users:         map[string]*domain.User{},
 		usersByEmail:  map[string]string{},
+		usersByOIDC:   map[string]string{},
 		squads:        map[string]*domain.Squad{},
 		agents:        map[string]*domain.Agent{},
 		identities:    map[string]*domain.AgentIdentity{},
@@ -129,25 +131,46 @@ func (m *MemoryStore) UpsertUser(_ context.Context, u *domain.User) (*domain.Use
 	defer m.mu.Unlock()
 
 	email := strings.ToLower(strings.TrimSpace(u.Email))
-	if id, ok := m.usersByEmail[email]; ok {
-		existing := cloneUser(m.users[id])
-		if u.Name != "" {
-			existing.Name = u.Name
+	oidcKey := userOIDCKey(u.OIDCIssuer, u.OIDCSubject)
+	if oidcKey != "" {
+		if id, ok := m.usersByOIDC[oidcKey]; ok {
+			existing := cloneUser(m.users[id])
+			existing.Email = email
+			existing.EmailVerified = u.EmailVerified
+			if u.Name != "" {
+				existing.Name = u.Name
+			}
+			m.users[id] = existing
+			m.usersByEmail[email] = id
+			return cloneUser(existing), nil
 		}
-		m.users[id] = existing
-		return cloneUser(existing), nil
+	}
+	if oidcKey == "" {
+		if id, ok := m.usersByEmail[email]; ok {
+			existing := cloneUser(m.users[id])
+			if u.Name != "" {
+				existing.Name = u.Name
+			}
+			m.users[id] = existing
+			return cloneUser(existing), nil
+		}
 	}
 
 	now := time.Now().UTC()
 	created := cloneUser(u)
 	created.ID = uuid.NewString()
 	created.Email = email
+	created.OIDCIssuer = strings.TrimSpace(u.OIDCIssuer)
+	created.OIDCSubject = strings.TrimSpace(u.OIDCSubject)
 	if created.Role == "" {
 		created.Role = domain.RoleUser
 	}
 	created.CreatedAt = now
 	m.users[created.ID] = created
 	m.usersByEmail[email] = created.ID
+	if oidcKey != "" {
+		m.usersByOIDC[oidcKey] = created.ID
+	}
 	return cloneUser(created), nil
 }
 
@@ -494,25 +517,25 @@ func (m *MemoryStore) ListGrants(_ context.Context, squadID string) ([]*domain.A
 	return out, nil
 }
 
-func (m *MemoryStore) UserMayAccessSquad(_ context.Context, userID, squadID string) (bool, error) {
+func (m *MemoryStore) UserMayAccessSquad(_ context.Context, userID, squadID string, action string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if squad, ok := m.squads[squadID]; ok && squad.OwnerID == userID {
 		return true, nil
 	}
 	for _, grant := range m.grants {
-		if grant.SquadID == squadID && grant.GranteeType == domain.GranteeUser && grant.GranteeID == userID {
+		if grant.SquadID == squadID && grant.GranteeType == domain.GranteeUser && grant.GranteeID == userID && grantAllows(grant.Permissions, action) {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
-func (m *MemoryStore) AgentMayMessageSquad(_ context.Context, agentID, squadID string) (bool, error) {
+func (m *MemoryStore) AgentMayMessageSquad(_ context.Context, agentID, squadID string, action string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, grant := range m.grants {
-		if grant.SquadID == squadID && grant.GranteeType == domain.GranteeAgent && grant.GranteeID == agentID {
+		if grant.SquadID == squadID && grant.GranteeType == domain.GranteeAgent && grant.GranteeID == agentID && grantAllows(grant.Permissions, action) {
 			return true, nil
 		}
 	}
@@ -1463,6 +1486,29 @@ func trimMessageReason(reason string) string {
 		return reason[:maxMessageTerminalReason]
 	}
 	return reason
+}
+
+func userOIDCKey(issuer, subject string) string {
+	issuer = strings.TrimSpace(issuer)
+	subject = strings.TrimSpace(subject)
+	if issuer == "" || subject == "" {
+		return ""
+	}
+	return issuer + "\x00" + subject
+}
+
+func grantAllows(permissions string, action string) bool {
+	action = strings.TrimSpace(strings.ToLower(action))
+	for _, part := range strings.Split(permissions, ",") {
+		permission := strings.TrimSpace(strings.ToLower(part))
+		if permission == "*" || permission == "admin" || permission == action {
+			return true
+		}
+		if action == "ping" && permission == "talk" {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneGrant(g *domain.AccessGrant) *domain.AccessGrant {

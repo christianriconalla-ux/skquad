@@ -36,7 +36,7 @@
 |--------|------|-------------|
 | `GET` | `/api/v1/auth/login` | Redirect to the OIDC IdP. |
 | `GET` | `/api/v1/auth/callback` | OIDC callback; issues a JWT. |
-| `GET` | `/api/v1/auth/me` | Current user (id, email, role). |
+| `GET` | `/api/v1/auth/me` | Current user (`id`, OIDC issuer/subject when present, email profile, `email_verified`, role). |
 | `POST` | `/api/v1/auth/logout` | Invalidate the session. |
 
 ---
@@ -128,11 +128,11 @@ completing the same task after a lease has moved on.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/agents/:id/chat` | Send a message to an agent (owner or granted). |
-| `GET` | `/api/v1/agents/:id/chat` | Get the chat history with an agent. |
+| `POST` | `/api/v1/agents/:id/chat` | Send a message to an agent (owner or `talk` grant). |
+| `GET` | `/api/v1/agents/:id/chat` | Get the chat history with an agent (owner or `read` grant). |
 
 > Chat is a **lightweight, non-task** interaction. It does not reset the task
-> context. Enforced by access grants for non-owners.
+> context. Enforced by scoped access grants for non-owners.
 >
 > Current implementation: `POST` enqueues a durable pending message; `GET`
 > returns queued message history visible to the caller.
@@ -151,7 +151,9 @@ completing the same task after a lease has moved on.
 | `POST` | `/api/v1/agents/me/messages/:id/ack` | Acknowledge a delivered message. |
 | `POST` | `/api/v1/agents/me/messages/:id/fail` | Report handler failure; schedules retry or dead-letters after attempts expire. |
 
-- **Cross-squad** messages are rejected (and audited) without an access grant.
+- **Cross-squad** messages are rejected (and audited) without an access grant:
+  `talk` allows consult/reply, `ping` allows ping, and `add_task` allows
+  delegate/handoff.
 - **Delegation / handoff** create a task on the target board + a ping.
 
 Current implementation covers durable message enqueue, retry-due inbox list,
@@ -201,7 +203,7 @@ yet interpreted by the control plane.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/squads/:id/access-grants` | Grant a user/agent access (owner). |
+| `POST` | `/api/v1/squads/:id/access-grants` | Grant scoped user/agent access (owner). Permissions are comma-separated `read`, `talk`, `ping`, `add_task`, `admin`, or `*`. |
 | `GET` | `/api/v1/squads/:id/access-grants` | List grants for a squad. |
 | `DELETE` | `/api/v1/access-grants/:id` | Revoke a grant (owner). |
 
@@ -272,8 +274,8 @@ Current read endpoints return aggregate totals. `?from=`, `?to=`, and
 | Manage users / registry | ✅ | — | — | — |
 | Create / delete squad | ✅ | ✅ (own) | — | — |
 | Manage squad agents | ✅ | ✅ (own) | — | — |
-| Create / assign tasks | ✅ | ✅ (own) | ✅ (granted) | ✅ (per grants) |
-| Chat with agent | ✅ | ✅ (own) | ✅ (granted) | — |
+| Create / assign tasks | ✅ | ✅ (own) | — | ✅ (`add_task` grant for delegate/handoff) |
+| Chat with agent | ✅ | ✅ (own) | ✅ (`talk` grant) | — |
 | Cross-squad message | ✅ | ✅ (per grants) | — | ✅ (per grants) |
 | View metering | ✅ (all) | ✅ (own) | — | — |
 | View audit | ✅ (all) | ✅ (own) | — | — |
