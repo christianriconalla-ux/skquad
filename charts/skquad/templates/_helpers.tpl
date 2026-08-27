@@ -63,3 +63,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "skquad.postgresName" -}}
 {{- printf "%s-postgres" (include "skquad.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
+
+{{- define "skquad.postgresSecretName" -}}
+{{- if .Values.postgres.existingSecret -}}
+{{- .Values.postgres.existingSecret -}}
+{{- else -}}
+{{- include "skquad.postgresName" . -}}
+{{- end -}}
+{{- end -}}

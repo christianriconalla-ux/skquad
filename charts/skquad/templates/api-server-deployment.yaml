@@ -42,15 +42,21 @@ spec:
               value: {{ printf "%s:%s" .Values.image.agentRuntime.repository .Values.image.agentRuntime.tag | quote }}
             - name: SKQUAD_DEFAULT_IDLE_TIMEOUT
               value: {{ .Values.agent.idleTimeout | quote }}
-            {{- if .Values.apiServer.databaseUrl }}
+            {{- if .Values.apiServer.databaseUrlSecret.name }}
+            - name: SKQUAD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiServer.databaseUrlSecret.name }}
+                  key: {{ .Values.apiServer.databaseUrlSecret.key }}
+            {{- else if .Values.apiServer.databaseUrl }}
             - name: SKQUAD_DATABASE_URL
               value: {{ .Values.apiServer.databaseUrl | quote }}
             {{- else if .Values.postgres.enabled }}
             - name: SKQUAD_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "skquad.postgresName" . }}
-                  key: database-url
+                  name: {{ include "skquad.postgresSecretName" . }}
+                  key: {{ .Values.postgres.secretKeys.databaseUrl }}
             {{- end }}
             {{- if eq .Values.apiServer.authMode "oidc" }}
             - name: SKQUAD_OIDC_ISSUER

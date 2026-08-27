@@ -1,0 +1,44 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "skquad.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "skquad.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                {{- if eq .service "apiServer" }}
+                name: {{ include "skquad.apiServerName" $ }}
+                {{- else if eq .service "llmGateway" }}
+                name: {{ include "skquad.llmGatewayName" $ }}
+                {{- else if eq .service "web" }}
+                name: {{ include "skquad.webName" $ }}
+                {{- else }}
+                {{- fail (printf "unknown ingress service %q" .service) }}
+                {{- end }}
+                port:
+                  name: http
+          {{- end }}
+    {{- end }}
+{{- end }}

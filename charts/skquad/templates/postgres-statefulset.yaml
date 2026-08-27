@@ -32,18 +32,18 @@ spec:
             - name: POSTGRES_DB
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "skquad.postgresName" . }}
-                  key: database
+                  name: {{ include "skquad.postgresSecretName" . }}
+                  key: {{ .Values.postgres.secretKeys.database }}
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "skquad.postgresName" . }}
-                  key: username
+                  name: {{ include "skquad.postgresSecretName" . }}
+                  key: {{ .Values.postgres.secretKeys.username }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "skquad.postgresName" . }}
-                  key: password
+                  name: {{ include "skquad.postgresSecretName" . }}
+                  key: {{ .Values.postgres.secretKeys.password }}
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           volumeMounts:

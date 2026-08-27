@@ -183,7 +183,7 @@ charts/skquad/
     ├── postgres-statefulset.yaml
     ├── web-deployment.yaml
     ├── web-service.yaml
-    ├── ingress.yaml                 # upcoming
+    ├── ingress.yaml                 # optional public route
     └── prometheus/                   # optional (observability feature)
         └── ...
 ```
@@ -192,7 +192,9 @@ charts/skquad/
 - **Squad/agent resources** are created via the **API** (not by hand) — the API
   creates the CRs, the operator reconciles them.
 - **Values** configure images, replicas, resources, Postgres, idle timeout,
-  observability toggle, etc.
+  ingress, observability toggle, etc.
+- **Secrets** default to chart-managed dev values, but production installs can
+  point Postgres and the API database URL at pre-created Kubernetes Secrets.
 
 ---
 
@@ -232,7 +234,8 @@ charts/skquad/
 - **Install:** `helm install skquad charts/skquad -n skquad-system --create-namespace`
   (CRDs installed first).
 - **Configure:** set values (Postgres, OIDC, LLM providers, idle timeout,
-  observability).
+  ingress, observability). Use existing Secrets for production database
+  credentials instead of committing credentials into values.
 - **Upgrade:** `helm upgrade` — the operator + control plane roll out; CRDs are
   versioned for backward compatibility.
 - **Uninstall:** `helm uninstall` — removes the control plane; squad namespaces

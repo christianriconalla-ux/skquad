@@ -22,6 +22,11 @@ The current chart installs:
 - LLM gateway ConfigMap, Deployment, and Service
 - Web Deployment and Service
 - Postgres Secret, Service, and StatefulSet for local/dev installs
+- Optional Kubernetes Ingress routing `/api` to the API server and `/` to the
+  web app
 
-Public ingress and production-grade secret management are still upcoming
-slices.
+For production installs, set `postgres.existingSecret` and
+`apiServer.databaseUrlSecret.name` so database credentials and the API database
+URL come from a pre-created Secret instead of chart values.
+
+Public DNS/TLS values and external database hardening are still upcoming slices.

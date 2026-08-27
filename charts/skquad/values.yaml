@@ -30,6 +30,12 @@ postgres:
   enabled: true
   image: pgvector/pgvector:pg16
   imagePullPolicy: IfNotPresent
+  existingSecret: ""
+  secretKeys:
+    database: database
+    username: username
+    password: password
+    databaseUrl: database-url
   database: skquad
   user: skquad
   password: skquad-dev-password
@@ -64,6 +70,9 @@ apiServer:
   imagePullPolicy: IfNotPresent
   authMode: dev
   databaseUrl: ""
+  databaseUrlSecret:
+    name: ""
+    key: database-url
   oidc:
     issuer: ""
     audience: ""
@@ -92,3 +101,18 @@ web:
   imagePullPolicy: IfNotPresent
   port: 3000
   resources: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: skquad.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: apiServer
+        - path: /
+          pathType: Prefix
+          service: web
+  tls: []
