@@ -28,6 +28,8 @@ spec:
               protocol: TCP
           env:
             - name: SKQUAD_API_BASE_URL
-              value: {{ printf "http://%s" (include "skquad.apiServerName" .) | quote }}
+              value: {{ printf "http://%s.%s.svc.cluster.local:8080/api/v1" (include "skquad.apiServerName" .) .Release.Namespace | quote }}
+            - name: NEXT_PUBLIC_SKQUAD_API_BASE_URL
+              value: {{ .Values.web.apiBaseUrl | quote }}
           resources:
             {{- toYaml .Values.web.resources | nindent 12 }}

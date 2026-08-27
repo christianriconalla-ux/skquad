@@ -140,6 +140,7 @@ llmGateway:
 web:
   imagePullPolicy: IfNotPresent
   port: 3000
+  apiBaseUrl: /api/v1
   resources: {}
 
 ingress:

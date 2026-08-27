@@ -87,4 +87,8 @@ Runtime polling defaults are configured through `agent.idleTimeout`,
 the operator injects the corresponding `SKQUAD_*` env vars into generated agent
 pods.
 
+`web.apiBaseUrl` configures `NEXT_PUBLIC_SKQUAD_API_BASE_URL` for browser API
+calls. The default `/api/v1` matches the chart ingress routing where `/api`
+goes to the API server and `/` goes to the web app.
+
 Public DNS/TLS values and external database hardening are still upcoming slices.
