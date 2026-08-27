@@ -1,7 +1,8 @@
 # skquad CI/CD
 
-> **Status:** Implemented validation CI and container image build/publish.
-> Deployment automation remains follow-up work.
+> **Status:** Implemented validation CI, container image build/publish, and an
+> initial lab GitOps deployment target. Image-tag promotion automation remains
+> follow-up work.
 
 The GitHub Actions workflow in `.github/workflows/ci.yml` is the main quality
 gate for the monorepo. It runs on pushes to `main` and on pull requests.
@@ -10,6 +11,12 @@ The image workflow in `.github/workflows/images.yml` builds deployable
 containers for every charted component. Pull requests build the images without
 publishing. Pushes to `main` and `v*.*.*` tags publish to GHCR. The workflow
 also mirrors to Docker Hub when Docker Hub repository secrets are configured.
+
+The lab deployment is managed from `/home/ross/projects/k3s-cluster` through
+the ArgoCD Application `apps/app-skquad.yaml`. It tracks this repository's
+`charts/skquad` path on `main`, deploys into `skquad-system`, uses the
+published GHCR `latest` image tags, and keeps ingress disabled while the chart
+still defaults to development authentication.
 
 ## Validation Jobs
 
@@ -24,7 +31,8 @@ also mirrors to Docker Hub when Docker Hub repository secrets are configured.
 
 ## Current Boundaries
 
-- The workflow does not deploy to Kubernetes.
+- The lab GitOps app deploys Skquad, but immutable image-tag promotion is not
+  automated yet. It currently follows the chart on `main` with `latest` tags.
 - Kubernetes server-side dry-runs are still done locally against the lab
   cluster when a chart change needs API admission validation.
 - The web job builds the current placeholder app shell; product UI coverage is
@@ -58,4 +66,5 @@ secrets:
 
 - Add integration/end-to-end tests once deployable images and test fixtures are
   available.
-- Add release/deployment automation after the GitOps target is finalized.
+- Add immutable image-tag promotion, for example by committing `sha-<short-sha>`
+  values to the GitOps repo or installing/configuring ArgoCD Image Updater.

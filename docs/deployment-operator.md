@@ -233,7 +233,23 @@ charts/skquad/
 
 ---
 
-## 7. Control Plane Deployment
+## 7. Lab GitOps Deployment
+
+The lab cluster deploys Skquad through the `k3s-cluster` GitOps repo:
+
+- Application: `/home/ross/projects/k3s-cluster/apps/app-skquad.yaml`
+- Source repo: `https://github.com/rossbrigoli/skquad`
+- Source path: `charts/skquad`
+- Destination namespace: `skquad-system`
+- Image tags: `latest` GHCR images from the Skquad Images workflow
+- Ingress: disabled while development authentication remains the chart default
+
+This gives the project a deployable lab target without exposing a dev-auth API
+over `*.lab`. Immutable image promotion remains a CI/CD follow-up.
+
+---
+
+## 8. Control Plane Deployment
 
 | Component | Workload | Notes |
 |-----------|----------|-------|
@@ -249,7 +265,7 @@ charts/skquad/
 
 ---
 
-## 8. Network Policies & Isolation
+## 9. Network Policies & Isolation
 
 - **Squad namespaces** are **default-deny**; egress allowed only to:
   - The **LLM gateway** (control plane).
@@ -264,7 +280,7 @@ charts/skquad/
 
 ---
 
-## 9. Installation & Upgrades
+## 10. Installation & Upgrades
 
 - **Install:** `helm install skquad charts/skquad -n skquad-system --create-namespace`
   (CRDs installed first).
@@ -278,7 +294,7 @@ charts/skquad/
 
 ---
 
-## 10. Observability (deployment-level)
+## 11. Observability (deployment-level)
 
 - **Prometheus** (optional, enabled via values) scrapes:
   - Control-plane metrics (API, gateway).
@@ -290,7 +306,7 @@ charts/skquad/
 
 ---
 
-## 11. Open Points
+## 12. Open Points
 
 - **Postgres** — StatefulSet vs. managed (RDS/Cloud SQL) vs. external; confirm
   the default for v1 (managed recommended for production).
