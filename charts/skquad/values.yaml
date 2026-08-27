@@ -102,6 +102,20 @@ llmGateway:
     key: master-key
   extraEnv: []
   extraEnvFrom: []
+  probes:
+    startup:
+      enabled: true
+      failureThreshold: 60
+      periodSeconds: 10
+      timeoutSeconds: 2
+    liveness:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readiness:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
   config: |
     model_list: []
     general_settings:

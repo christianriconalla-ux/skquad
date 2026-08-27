@@ -60,14 +60,29 @@ spec:
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.llmGateway.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: /health/liveliness
+              port: http
+            failureThreshold: {{ .Values.llmGateway.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.llmGateway.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.llmGateway.probes.startup.timeoutSeconds }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /health/liveliness
               port: http
+            failureThreshold: {{ .Values.llmGateway.probes.liveness.failureThreshold }}
+            periodSeconds: {{ .Values.llmGateway.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.llmGateway.probes.liveness.timeoutSeconds }}
           readinessProbe:
             httpGet:
               path: /health/readiness
               port: http
+            failureThreshold: {{ .Values.llmGateway.probes.readiness.failureThreshold }}
+            periodSeconds: {{ .Values.llmGateway.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.llmGateway.probes.readiness.timeoutSeconds }}
           volumeMounts:
             - name: config
               mountPath: /etc/skquad/llm-gateway

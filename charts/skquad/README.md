@@ -62,6 +62,12 @@ Set `llmGateway.masterKeySecret.name` to use a pre-created Secret instead of
 the development `llmGateway.masterKey` value. Put provider definitions in
 `llmGateway.config` and inject provider API keys with `llmGateway.extraEnv` or
 `llmGateway.extraEnvFrom`; do not place real API keys in the config map.
+The gateway image includes LiteLLM proxy dependencies plus generated Prisma
+client artifacts for persistent virtual-key storage.
+
+`llmGateway.probes.startup` gives LiteLLM time to prepare database-backed proxy
+state before liveness checks can restart the container. Tune it upward if a
+large migration or cold image pull makes startup exceed the default window.
 
 Runtime polling defaults are configured through `agent.idleTimeout`,
 `agent.taskPollIntervalSeconds`, `agent.inboxPollIntervalSeconds`, and
