@@ -37,7 +37,21 @@ spec:
                 secretKeyRef:
                   name: {{ include "skquad.llmGatewayMasterKeySecretName" . }}
                   key: {{ .Values.llmGateway.masterKeySecret.key }}
-            {{- if .Values.apiServer.databaseUrlSecret.name }}
+            - name: LITELLM_MIGRATION_DIR
+              value: {{ .Values.llmGateway.migrationDir | quote }}
+            {{- if .Values.llmGateway.databaseUrlSecret.name }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llmGateway.databaseUrlSecret.name }}
+                  key: {{ .Values.llmGateway.databaseUrlSecret.key }}
+            {{- else if .Values.llmGateway.databaseUrl }}
+            - name: DATABASE_URL
+              value: {{ .Values.llmGateway.databaseUrl | quote }}
+            {{- else if .Values.postgres.enabled }}
+            - name: DATABASE_URL
+              value: {{ printf "postgres://%s:%s@%s:5432/%s?sslmode=disable&schema=litellm" .Values.postgres.user .Values.postgres.password (include "skquad.postgresName" .) .Values.postgres.database | quote }}
+            {{- else if .Values.apiServer.databaseUrlSecret.name }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -46,12 +60,6 @@ spec:
             {{- else if .Values.apiServer.databaseUrl }}
             - name: DATABASE_URL
               value: {{ .Values.apiServer.databaseUrl | quote }}
-            {{- else if .Values.postgres.enabled }}
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "skquad.postgresSecretName" . }}
-                  key: {{ .Values.postgres.secretKeys.databaseUrl }}
             {{- end }}
             {{- with .Values.llmGateway.extraEnv }}
             {{- toYaml . | nindent 12 }}

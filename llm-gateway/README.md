@@ -19,11 +19,14 @@ llm-gateway/
 - Runs the LiteLLM proxy with a `model_list` supplied through Helm values or
   this local bootstrap config.
 - Enforces LiteLLM virtual-key authentication through `LITELLM_MASTER_KEY`.
-- Uses the shared Postgres `DATABASE_URL` so LiteLLM can persist generated
-  virtual keys and spend state.
+- Uses `DATABASE_URL` so LiteLLM can persist generated virtual keys and spend
+  state. The Helm chart targets a separate `litellm` Postgres schema when it
+  uses the bundled database.
 - Includes `prisma` explicitly and generates LiteLLM's Prisma client during the
   image build because persistent virtual-key state requires Prisma binaries at
   proxy startup.
+- Uses `LITELLM_MIGRATION_DIR` for writable LiteLLM migration/baseline state at
+  runtime.
 - Keeps provider credentials externalizable via environment variables or
   mounted Kubernetes Secrets referenced from `model_list` entries.
 

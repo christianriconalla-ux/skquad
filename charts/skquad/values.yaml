@@ -100,6 +100,11 @@ llmGateway:
   masterKeySecret:
     name: ""
     key: master-key
+  databaseUrl: ""
+  databaseUrlSecret:
+    name: ""
+    key: database-url
+  migrationDir: /tmp/litellm-migrations
   extraEnv: []
   extraEnvFrom: []
   probes:

@@ -56,18 +56,23 @@ endpoints.
 
 The chart starts the gateway as a LiteLLM proxy using
 `llmGateway.config`. By default that config enables virtual-key auth through
-`LITELLM_MASTER_KEY`, uses the chart/Postgres `DATABASE_URL`, and has an empty
-`model_list` so the default render is valid without real provider credentials.
+`LITELLM_MASTER_KEY`, uses the chart/Postgres database with a separate
+`litellm` schema, and has an empty `model_list` so the default render is valid
+without real provider credentials.
 Set `llmGateway.masterKeySecret.name` to use a pre-created Secret instead of
-the development `llmGateway.masterKey` value. Put provider definitions in
-`llmGateway.config` and inject provider API keys with `llmGateway.extraEnv` or
-`llmGateway.extraEnvFrom`; do not place real API keys in the config map.
+the development `llmGateway.masterKey` value. Set `llmGateway.databaseUrl` or
+`llmGateway.databaseUrlSecret` to use an external LiteLLM database. Put provider
+definitions in `llmGateway.config` and inject provider API keys with
+`llmGateway.extraEnv` or `llmGateway.extraEnvFrom`; do not place real API keys
+in the config map.
 The gateway image includes LiteLLM proxy dependencies plus generated Prisma
 client artifacts for persistent virtual-key storage.
 
 `llmGateway.probes.startup` gives LiteLLM time to prepare database-backed proxy
 state before liveness checks can restart the container. Tune it upward if a
 large migration or cold image pull makes startup exceed the default window.
+`llmGateway.migrationDir` sets `LITELLM_MIGRATION_DIR` to a writable path so
+LiteLLM can create baseline migration state if the target schema is not empty.
 
 Runtime polling defaults are configured through `agent.idleTimeout`,
 `agent.taskPollIntervalSeconds`, `agent.inboxPollIntervalSeconds`, and
