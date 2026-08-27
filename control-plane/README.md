@@ -61,7 +61,8 @@ Implemented slice:
 - Metering reads for squad, agent, and platform-admin summary views
 - Audit log reads for squad owners and platform admins
 - Best-effort audit recording for control-plane mutations
-- Optional Kubernetes `Squad`/`Agent` CR writer for squad/agent mutations
+- Optional Kubernetes `Squad`/`Agent` CR writer for squad/agent mutations,
+  including the generated squad namespace in `Squad.spec.namespace`
 - Consistent JSON error envelopes
 - Process-local in-memory store for development and handler tests
 - Postgres-backed user/squad/agent/identity/permission/board/task/access-grant/

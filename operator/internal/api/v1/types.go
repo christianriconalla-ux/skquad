@@ -6,6 +6,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const (
@@ -15,11 +16,27 @@ const (
 	Version = "v1"
 )
 
+var (
+	// GroupVersion identifies the skquad Kubernetes API.
+	GroupVersion = schema.GroupVersion{Group: Group, Version: Version}
+	// SchemeBuilder registers skquad API types with a Kubernetes scheme.
+	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
+	// AddToScheme registers skquad API types with a Kubernetes scheme.
+	AddToScheme = SchemeBuilder.AddToScheme
+)
+
+func addKnownTypes(scheme *runtime.Scheme) error {
+	scheme.AddKnownTypes(GroupVersion, &Squad{}, &SquadList{}, &Agent{}, &AgentList{})
+	metav1.AddToGroupVersion(scheme, GroupVersion)
+	return nil
+}
+
 // SquadSpec declares the desired state for a squad namespace and base
 // resources.
 type SquadSpec struct {
 	SquadID        string               `json:"squadId"`
 	OwnerRef       string               `json:"ownerRef"`
+	Namespace      string               `json:"namespace,omitempty"`
 	Mission        string               `json:"mission,omitempty"`
 	OperatingModel apiextensionsv1.JSON `json:"operatingModel,omitempty"`
 	Status         string               `json:"status,omitempty"`

@@ -62,6 +62,7 @@ func (w *CRWriter) UpsertSquad(ctx context.Context, squad *domain.Squad) error {
 		"spec": map[string]any{
 			"squadId":        squad.ID,
 			"ownerRef":       squad.OwnerID,
+			"namespace":      squad.Namespace,
 			"mission":        squad.Mission,
 			"operatingModel": rawJSON(squad.OperatingModel, map[string]any{}),
 			"status":         squad.Status,

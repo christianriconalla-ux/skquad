@@ -20,6 +20,10 @@ operator/
 - `skquad.io/v1` `Squad` and `Agent` Kubernetes API types
 - List types for both resources
 - `runtime.Object` `DeepCopyObject` support for manager/client registration
+- Scheme registration for `skquad.io/v1`
+- controller-runtime manager entrypoint with health/readiness probes
+- First `Squad` reconciler: creates/labels the configured squad namespace and
+  records basic ready status
 
-Next slices are scheme registration, controller-runtime manager startup, and
-the Squad/Agent reconcilers.
+Next slices are default namespace resources (NetworkPolicy/ResourceQuota/
+ServiceAccount) and the Agent reconciler.
