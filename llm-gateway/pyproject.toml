@@ -5,6 +5,7 @@ description = "skquad central LLM gateway (LiteLLM proxy): metering, cost, BYOM,
 requires-python = ">=3.11"
 dependencies = [
     "litellm[proxy]>=1.40",
+    "prisma>=0.15",
     "psycopg[binary]>=3.1",
 ]
 

@@ -21,6 +21,8 @@ llm-gateway/
 - Enforces LiteLLM virtual-key authentication through `LITELLM_MASTER_KEY`.
 - Uses the shared Postgres `DATABASE_URL` so LiteLLM can persist generated
   virtual keys and spend state.
+- Includes `prisma` explicitly because LiteLLM imports Prisma database error
+  types during proxy startup when persistent virtual-key state is enabled.
 - Keeps provider credentials externalizable via environment variables or
   mounted Kubernetes Secrets referenced from `model_list` entries.
 

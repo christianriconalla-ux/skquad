@@ -79,6 +79,7 @@ jobs:
           pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
           deps = pyproject["project"]["dependencies"]
           assert any(dep.startswith("litellm") for dep in deps)
+          assert any(dep.startswith("prisma") for dep in deps)
           assert any(dep.startswith("psycopg") for dep in deps)
 
           config = pathlib.Path("config.yaml").read_text()
