@@ -23,6 +23,9 @@ replicas:
   operator: 1
   web: 1
 
+namespace:
+  create: true
+
 postgres:
   enabled: true
   image: pgvector/pgvector:pg16
@@ -32,3 +35,20 @@ observability:
 
 agent:
   idleTimeout: 300s
+
+operator:
+  leaderElection: true
+  metricsBindAddress: ":8080"
+  healthProbeBindAddress: ":8081"
+  imagePullPolicy: IfNotPresent
+  resources: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true

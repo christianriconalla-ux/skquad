@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "skquad.operatorName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "skquad.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+spec:
+  replicas: {{ .Values.replicas.operator }}
+  selector:
+    matchLabels:
+      {{- include "skquad.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      labels:
+        {{- include "skquad.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: operator
+    spec:
+      serviceAccountName: {{ include "skquad.operatorName" . }}
+      securityContext:
+        {{- toYaml .Values.operator.podSecurityContext | nindent 8 }}
+      containers:
+        - name: manager
+          image: {{ include "skquad.operatorImage" . | quote }}
+          imagePullPolicy: {{ .Values.operator.imagePullPolicy }}
+          args:
+            - --leader-elect={{ .Values.operator.leaderElection }}
+            - --metrics-bind-address={{ .Values.operator.metricsBindAddress }}
+            - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.operator.securityContext | nindent 12 }}

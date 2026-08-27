@@ -30,6 +30,8 @@ operator/
   the squad agent ServiceAccount, mounts optional agent credential/virtual-key
   Secrets, and writes basic ready status
 - Helm CRDs for `squads.skquad.io` and `agents.skquad.io`
+- Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
+  and Deployment
 
-Next slices are richer network egress policies, operator RBAC/deployment
+Next slices are richer network egress policies, control-plane/runtime chart
 templates, and the agent runtime bootstrap contract.

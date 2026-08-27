@@ -160,15 +160,14 @@ Operator reconciles
 charts/skquad/
 ├── Chart.yaml
 ├── values.yaml
+├── crds/                        # Squad, Agent
+│   ├── skquad.io_squads.yaml
+│   └── skquad.io_agents.yaml
 └── templates/
     ├── namespace.yaml              # skquad-system
-    ├── crds/                        # Squad, Agent (or separate CRD install)
-    │   ├── squad.yaml
-    │   └── agent.yaml
-    ├── operator/
-    │   ├── deployment.yaml
-    │   ├── rbac.yaml                # ClusterRole/Binding (needs cross-ns)
-    │   └── serviceaccount.yaml
+    ├── operator-deployment.yaml
+    ├── operator-rbac.yaml           # ClusterRole/Binding (needs cross-ns)
+    ├── operator-serviceaccount.yaml
     ├── api-server/
     │   ├── deployment.yaml
     │   ├── service.yaml

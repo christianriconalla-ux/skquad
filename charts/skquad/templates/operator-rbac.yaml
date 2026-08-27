@@ -1,0 +1,101 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "skquad.operatorName" . }}
+  labels:
+    {{- include "skquad.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+rules:
+  - apiGroups:
+      - skquad.io
+    resources:
+      - squads
+      - agents
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - skquad.io
+    resources:
+      - squads/status
+      - agents/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - resourcequotas
+      - secrets
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - update
+      - delete
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - networkpolicies
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - update
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "skquad.operatorName" . }}
+  labels:
+    {{- include "skquad.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "skquad.operatorName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "skquad.operatorName" . }}
+    namespace: {{ .Release.Namespace }}
