@@ -78,6 +78,8 @@ type AgentSpec struct {
 	Image             string               `json:"image"`
 	CredentialSecret  string               `json:"credentialSecret,omitempty"`
 	VirtualKeySecret  string               `json:"virtualKeySecret,omitempty"`
+	ControlPlaneURL   string               `json:"controlPlaneUrl,omitempty"`
+	LLMGatewayURL     string               `json:"llmGatewayUrl,omitempty"`
 	Permissions       apiextensionsv1.JSON `json:"permissions,omitempty"`
 	IdleTimeout       string               `json:"idleTimeout,omitempty"`
 	DesiredActive     bool                 `json:"desiredActive"`

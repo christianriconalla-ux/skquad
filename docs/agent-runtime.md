@@ -217,9 +217,17 @@ variables:
 | `SKQUAD_CREDENTIALS_DIR` | Root directory for mounted agent credentials. |
 | `SKQUAD_AGENT_CREDENTIAL_PATH` | Mounted Secret directory or file for the agent credential. |
 | `SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH` | Mounted Secret directory or file for the gateway virtual key. |
+| `SKQUAD_CONTROL_PLANE_URL` | Control-plane URL for task claim/status/heartbeat calls. |
+| `SKQUAD_LLM_GATEWAY_URL` | LLM gateway URL for model calls. |
 
 The runtime readiness check reports only booleans for secret presence; it never
 returns raw credential values.
+
+Current implementation includes a small control-plane client and `poll_once`
+primitive. `poll_once` claims the next assigned task, reports `busy` when work
+is present, and reports `idle` when no task is available. It deliberately does
+not synthesize task completion; the real task execution loop lands with the
+plugin/LiteLLM slice.
 
 ---
 

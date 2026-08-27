@@ -859,6 +859,61 @@ func (m *MemoryStore) ListTasks(_ context.Context, boardID string, status domain
 	return out, nil
 }
 
+func (m *MemoryStore) ListAgentTasks(_ context.Context, agentID string) ([]*domain.Task, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return nil, ErrNotFound
+	}
+	out := []*domain.Task{}
+	for _, t := range m.tasks {
+		if t.AssigneeAgentID == agentID {
+			out = append(out, cloneTask(t))
+		}
+	}
+	slices.SortFunc(out, func(a, b *domain.Task) int {
+		if a.Status != b.Status {
+			return strings.Compare(string(a.Status), string(b.Status))
+		}
+		return a.Position - b.Position
+	})
+	return out, nil
+}
+
+func (m *MemoryStore) ClaimNextTask(_ context.Context, agentID string) (*domain.Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.agents[agentID]; !ok {
+		return nil, ErrNotFound
+	}
+	var candidate *domain.Task
+	for _, task := range m.tasks {
+		if task.AssigneeAgentID == agentID && task.Status == domain.TaskInProgress {
+			if candidate == nil || task.UpdatedAt.Before(candidate.UpdatedAt) {
+				candidate = task
+			}
+		}
+	}
+	if candidate == nil {
+		for _, task := range m.tasks {
+			if task.AssigneeAgentID == agentID && task.Status == domain.TaskTodo {
+				if candidate == nil || task.Position < candidate.Position {
+					candidate = task
+				}
+			}
+		}
+	}
+	if candidate == nil {
+		return nil, ErrNotFound
+	}
+	if candidate.Status != domain.TaskInProgress {
+		candidate.Status = domain.TaskInProgress
+		candidate.Position = m.nextTaskPosition(candidate.BoardID, domain.TaskInProgress)
+	}
+	candidate.UpdatedAt = time.Now().UTC()
+	return cloneTask(candidate), nil
+}
+
 func (m *MemoryStore) nextTaskPosition(boardID string, status domain.TaskStatus) int {
 	next := 1
 	for _, task := range m.tasks {

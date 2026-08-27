@@ -75,6 +75,8 @@ type TaskStore interface {
 	UpdateTask(ctx context.Context, t *domain.Task) (*domain.Task, error)
 	DeleteTask(ctx context.Context, id string) error
 	ListTasks(ctx context.Context, boardID string, status domain.TaskStatus) ([]*domain.Task, error) // status "" = all
+	ListAgentTasks(ctx context.Context, agentID string) ([]*domain.Task, error)
+	ClaimNextTask(ctx context.Context, agentID string) (*domain.Task, error)
 }
 
 // RegistryStore persists registry resources (LLM providers + generic resources).

@@ -8,9 +8,11 @@ credential directories.
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
+from urllib import error, request
 
 
 DEFAULT_CREDENTIALS_DIR = Path("/var/run/skquad/credentials")
@@ -49,6 +51,16 @@ class BootstrapStatus:
     missing_required: list[str]
     credential_loaded: bool
     virtual_key_loaded: bool
+
+
+@dataclass(frozen=True)
+class RuntimeTask:
+    id: str
+    squad_id: str
+    title: str
+    description: str
+    status: str
+    assignee_agent_id: str
 
 
 def load_bootstrap_config(environ: Mapping[str, str] | None = None) -> BootstrapConfig:
@@ -102,6 +114,98 @@ def read_secret_value(path: Path, preferred_keys: tuple[str, ...] = ("token", "c
         if value:
             return value
     return None
+
+
+class ControlPlaneClient:
+    def __init__(
+        self,
+        base_url: str,
+        agent_id: str,
+        credential: str,
+        opener: Callable[[request.Request], object] | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.agent_id = agent_id
+        self.credential = credential
+        self._opener = opener or request.urlopen
+
+    @classmethod
+    def from_bootstrap(cls, config: BootstrapConfig) -> "ControlPlaneClient":
+        credential = read_secret_value(config.agent_credential_path)
+        if credential is None:
+            raise RuntimeError("agent credential is not loaded")
+        if not config.control_plane_url:
+            raise RuntimeError("SKQUAD_CONTROL_PLANE_URL is required")
+        return cls(config.control_plane_url, config.agent_id, credential)
+
+    def heartbeat(self, status: str) -> dict[str, object]:
+        return self._json("POST", "/api/v1/agents/me/heartbeat", {"status": status})
+
+    def list_tasks(self) -> list[RuntimeTask]:
+        payload = self._json("GET", "/api/v1/agents/me/tasks", None)
+        return [runtime_task(item) for item in payload]
+
+    def claim_task(self) -> RuntimeTask | None:
+        payload = self._json("POST", "/api/v1/agents/me/tasks/claim", None, allow_empty=True)
+        if payload is None:
+            return None
+        return runtime_task(payload)
+
+    def complete_task(self, task_id: str, status: str = "in-review") -> RuntimeTask:
+        payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/complete", {"status": status})
+        return runtime_task(payload)
+
+    def block_task(self, task_id: str) -> RuntimeTask:
+        payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/block", None)
+        return runtime_task(payload)
+
+    def _json(self, method: str, path: str, body: object | None, allow_empty: bool = False):
+        data = None
+        headers = {
+            "Authorization": f"Bearer {self.credential}",
+            "X-Skquad-Agent-ID": self.agent_id,
+            "Accept": "application/json",
+        }
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = request.Request(self.base_url + path, data=data, headers=headers, method=method)
+        try:
+            with self._opener(req) as response:
+                if response.status == 204 and allow_empty:
+                    return None
+                payload = response.read()
+        except error.HTTPError as exc:
+            if exc.code == 204 and allow_empty:
+                return None
+            raise RuntimeError(f"control-plane request failed: {exc.code}") from exc
+        if not payload and allow_empty:
+            return None
+        return json.loads(payload.decode("utf-8"))
+
+
+def runtime_task(payload: Mapping[str, object]) -> RuntimeTask:
+    return RuntimeTask(
+        id=str(payload.get("id", "")),
+        squad_id=str(payload.get("squad_id", "")),
+        title=str(payload.get("title", "")),
+        description=str(payload.get("description", "")),
+        status=str(payload.get("status", "")),
+        assignee_agent_id=str(payload.get("assignee_agent_id", "")),
+    )
+
+
+def poll_once(config: BootstrapConfig, client: ControlPlaneClient | None = None) -> RuntimeTask | None:
+    status = bootstrap_status(config)
+    if not status.ready:
+        return None
+    control_plane = client or ControlPlaneClient.from_bootstrap(config)
+    task = control_plane.claim_task()
+    if task is None:
+        control_plane.heartbeat("idle")
+        return None
+    control_plane.heartbeat("busy")
+    return task
 
 
 def create_app(config: BootstrapConfig | None = None):

@@ -45,6 +45,8 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 			Image:             "example.com/skquad/agent:test",
 			CredentialSecret:  "agent-credential",
 			VirtualKeySecret:  "agent-virtual-key",
+			ControlPlaneURL:   "http://skquad-api-server.skquad-system.svc.cluster.local:8080",
+			LLMGatewayURL:     "http://skquad-llm-gateway.skquad-system.svc.cluster.local:4000",
 			IdleTimeout:       "300s",
 			DesiredActive:     true,
 		},
@@ -90,6 +92,12 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	}
 	if got := envValue(container.Env, "SKQUAD_LLM_GATEWAY_VIRTUAL_KEY_PATH"); got != credentialsMount+"/llm-gateway" {
 		t.Fatalf("virtual key path env = %q, want %q", got, credentialsMount+"/llm-gateway")
+	}
+	if got := envValue(container.Env, "SKQUAD_CONTROL_PLANE_URL"); got != agent.Spec.ControlPlaneURL {
+		t.Fatalf("control plane url env = %q, want %q", got, agent.Spec.ControlPlaneURL)
+	}
+	if got := envValue(container.Env, "SKQUAD_LLM_GATEWAY_URL"); got != agent.Spec.LLMGatewayURL {
+		t.Fatalf("llm gateway url env = %q, want %q", got, agent.Spec.LLMGatewayURL)
 	}
 	if got := deployment.Spec.Template.Labels["skquad.io/agent-id"]; got != agent.Spec.AgentID {
 		t.Fatalf("agent label = %q, want %q", got, agent.Spec.AgentID)

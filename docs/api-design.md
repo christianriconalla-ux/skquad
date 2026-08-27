@@ -91,9 +91,11 @@
 > | Method | Path | Description |
 > |--------|------|-------------|
 > | `GET` | `/api/v1/agents/me/tasks` | Tasks assigned to this agent. |
+> | `POST` | `/api/v1/agents/me/tasks/claim` | Idempotently claim the current `in-progress` task or the next assigned `todo` task. |
 > | `POST` | `/api/v1/agents/me/tasks/:id/start` | Mark a task `in-progress` (context reset). |
 > | `POST` | `/api/v1/agents/me/tasks/:id/complete` | Mark a task done / in-review. |
 > | `POST` | `/api/v1/agents/me/tasks/:id/block` | Mark a task `blocked`. |
+> | `POST` | `/api/v1/agents/me/heartbeat` | Report `idle`, `busy`, or `error`. |
 
 ---
 

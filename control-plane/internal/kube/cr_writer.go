@@ -19,12 +19,14 @@ import (
 
 // CRWriter writes Squad and Agent custom resources through the Kubernetes API.
 type CRWriter struct {
-	baseURL      string
-	namespace    string
-	groupVersion string
-	agentImage   string
-	token        string
-	client       *http.Client
+	baseURL         string
+	namespace       string
+	groupVersion    string
+	agentImage      string
+	controlPlaneURL string
+	llmGatewayURL   string
+	token           string
+	client          *http.Client
 }
 
 // NewCRWriter creates a Kubernetes REST writer from config.
@@ -38,12 +40,14 @@ func NewCRWriter(cfg *config.Config) (*CRWriter, error) {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicit dev mode
 	}
 	return &CRWriter{
-		baseURL:      strings.TrimRight(cfg.K8sAPIBase, "/"),
-		namespace:    cfg.K8sNamespace,
-		groupVersion: cfg.K8sGroupVersion,
-		agentImage:   cfg.AgentImage,
-		token:        strings.TrimSpace(string(token)),
-		client:       &http.Client{Transport: transport},
+		baseURL:         strings.TrimRight(cfg.K8sAPIBase, "/"),
+		namespace:       cfg.K8sNamespace,
+		groupVersion:    cfg.K8sGroupVersion,
+		agentImage:      cfg.AgentImage,
+		controlPlaneURL: cfg.ControlPlaneURL,
+		llmGatewayURL:   cfg.LLMGatewayURL,
+		token:           strings.TrimSpace(string(token)),
+		client:          &http.Client{Transport: transport},
 	}, nil
 }
 
@@ -85,6 +89,12 @@ func (w *CRWriter) UpsertAgent(ctx context.Context, agent *domain.Agent, identit
 		"permissions":       rawJSON(agent.Permissions, []any{}),
 		"idleTimeout":       fmt.Sprintf("%ds", agent.IdleTimeoutSec),
 		"desiredActive":     agent.Status == domain.AgentBusy,
+	}
+	if w.controlPlaneURL != "" {
+		spec["controlPlaneUrl"] = w.controlPlaneURL
+	}
+	if w.llmGatewayURL != "" {
+		spec["llmGatewayUrl"] = w.llmGatewayURL
 	}
 	if identity != nil {
 		if secretName := secretNameFromRef(identity.CredentialRef); secretName != "" {

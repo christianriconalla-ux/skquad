@@ -24,9 +24,15 @@ The current chart installs:
 - Postgres Secret, Service, and StatefulSet for local/dev installs
 - Optional Kubernetes Ingress routing `/api` to the API server and `/` to the
   web app
+- Runtime URL defaults so generated Agent CRs point pods back at the chart's API
+  server and LLM gateway services.
 
 For production installs, set `postgres.existingSecret` and
 `apiServer.databaseUrlSecret.name` so database credentials and the API database
 URL come from a pre-created Secret instead of chart values.
+
+Override `apiServer.runtimeControlPlaneUrl` or
+`apiServer.runtimeLlmGatewayUrl` when agent pods must call non-chart service
+endpoints.
 
 Public DNS/TLS values and external database hardening are still upcoming slices.

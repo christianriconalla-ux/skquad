@@ -3,9 +3,11 @@ import unittest
 from pathlib import Path
 
 from skquad_runtime.runtime import (
+    ControlPlaneClient,
     bootstrap_status,
     create_app,
     load_bootstrap_config,
+    poll_once,
     read_secret_value,
 )
 
@@ -79,6 +81,101 @@ class RuntimeBootstrapTest(unittest.TestCase):
             self.assertTrue(status.ready)
             self.assertTrue(status.credential_loaded)
             self.assertTrue(status.virtual_key_loaded)
+
+    def test_control_plane_client_sends_agent_auth_headers(self):
+        calls = []
+
+        def opener(req):
+            calls.append(req)
+            return FakeResponse(200, b'{"id":"task-1","squad_id":"squad-1","title":"T","description":"","status":"in-progress","assignee_agent_id":"agent-1"}')
+
+        client = ControlPlaneClient("http://control-plane", "agent-1", "credential", opener=opener)
+
+        task = client.claim_task()
+
+        self.assertEqual(task.id, "task-1")
+        self.assertEqual(calls[0].full_url, "http://control-plane/api/v1/agents/me/tasks/claim")
+        self.assertEqual(calls[0].headers["Authorization"], "Bearer credential")
+        self.assertEqual(calls[0].headers["X-skquad-agent-id"], "agent-1")
+
+    def test_control_plane_client_claim_handles_no_content(self):
+        client = ControlPlaneClient(
+            "http://control-plane",
+            "agent-1",
+            "credential",
+            opener=lambda _req: FakeResponse(204, b""),
+        )
+
+        self.assertIsNone(client.claim_task())
+
+    def test_poll_once_reports_idle_without_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential = Path(tmp) / "agent"
+            credential.write_text("credential", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                }
+            )
+            client = FakeControlPlaneClient(claimed_task=None)
+
+            task = poll_once(config, client)
+
+            self.assertIsNone(task)
+            self.assertEqual(client.heartbeats, ["idle"])
+
+    def test_poll_once_reports_busy_with_claimed_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credential = Path(tmp) / "agent"
+            credential.write_text("credential", encoding="utf-8")
+            config = load_bootstrap_config(
+                {
+                    "SKQUAD_AGENT_ID": "agent-1",
+                    "SKQUAD_SQUAD_ID": "squad-1",
+                    "SKQUAD_AGENT_CREDENTIAL_PATH": str(credential),
+                }
+            )
+            client = FakeControlPlaneClient(claimed_task=FakeTask("task-1"))
+
+            task = poll_once(config, client)
+
+            self.assertEqual(task.id, "task-1")
+            self.assertEqual(client.heartbeats, ["busy"])
+
+
+class FakeResponse:
+    def __init__(self, status, payload):
+        self.status = status
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return False
+
+    def read(self):
+        return self._payload
+
+
+class FakeTask:
+    def __init__(self, task_id):
+        self.id = task_id
+
+
+class FakeControlPlaneClient:
+    def __init__(self, claimed_task):
+        self.claimed_task = claimed_task
+        self.heartbeats = []
+
+    def claim_task(self):
+        return self.claimed_task
+
+    def heartbeat(self, status):
+        self.heartbeats.append(status)
+        return {}
 
 
 if __name__ == "__main__":

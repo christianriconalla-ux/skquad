@@ -3,6 +3,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,53 +90,66 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 	r.Get("/healthz", s.health)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(s.authenticate)
+		r.Route("/agents/me", func(r chi.Router) {
+			r.Use(s.authenticateAgent)
 
-		r.Get("/auth/me", s.me)
+			r.Get("/tasks", s.listCurrentAgentTasks)
+			r.Post("/tasks/claim", s.claimCurrentAgentTask)
+			r.Post("/tasks/{taskID}/start", s.startCurrentAgentTask)
+			r.Post("/tasks/{taskID}/complete", s.completeCurrentAgentTask)
+			r.Post("/tasks/{taskID}/block", s.blockCurrentAgentTask)
+			r.Post("/heartbeat", s.currentAgentHeartbeat)
+		})
 
-		r.Post("/squads", s.createSquad)
-		r.Get("/squads", s.listSquads)
-		r.Get("/squads/{squadID}", s.getSquad)
-		r.Patch("/squads/{squadID}", s.updateSquad)
-		r.Delete("/squads/{squadID}", s.deleteSquad)
-		r.Post("/squads/{squadID}/access-grants", s.createGrant)
-		r.Get("/squads/{squadID}/access-grants", s.listGrants)
-		r.Delete("/access-grants/{grantID}", s.deleteGrant)
+		r.Group(func(r chi.Router) {
+			r.Use(s.authenticate)
 
-		r.Post("/squads/{squadID}/agents", s.createAgent)
-		r.Get("/squads/{squadID}/agents", s.listAgents)
-		r.Get("/agents/{agentID}", s.getAgent)
-		r.Patch("/agents/{agentID}", s.updateAgent)
-		r.Delete("/agents/{agentID}", s.deleteAgent)
-		r.Post("/agents/{agentID}/identity", s.createAgentIdentity)
-		r.Post("/agents/{agentID}/identity/rotate", s.rotateAgentIdentity)
-		r.Get("/agents/{agentID}/permissions", s.listAgentPermissions)
-		r.Put("/agents/{agentID}/permissions", s.setAgentPermissions)
+			r.Get("/auth/me", s.me)
 
-		r.Get("/squads/{squadID}/board", s.getBoard)
-		r.Get("/squads/{squadID}/metering", s.getSquadMetering)
-		r.Get("/squads/{squadID}/audit", s.listSquadAudit)
-		r.Post("/squads/{squadID}/board/tasks", s.createTask)
-		r.Get("/tasks/{taskID}", s.getTask)
-		r.Patch("/tasks/{taskID}", s.updateTask)
-		r.Post("/tasks/{taskID}/move", s.moveTask)
-		r.Delete("/tasks/{taskID}", s.deleteTask)
-		r.Get("/agents/{agentID}/metering", s.getAgentMetering)
+			r.Post("/squads", s.createSquad)
+			r.Get("/squads", s.listSquads)
+			r.Get("/squads/{squadID}", s.getSquad)
+			r.Patch("/squads/{squadID}", s.updateSquad)
+			r.Delete("/squads/{squadID}", s.deleteSquad)
+			r.Post("/squads/{squadID}/access-grants", s.createGrant)
+			r.Get("/squads/{squadID}/access-grants", s.listGrants)
+			r.Delete("/access-grants/{grantID}", s.deleteGrant)
 
-		r.Post("/registry/llm-providers", s.createLLMProvider)
-		r.Get("/registry/llm-providers", s.listLLMProviders)
-		r.Get("/registry/llm-providers/{providerID}", s.getLLMProvider)
-		r.Patch("/registry/llm-providers/{providerID}", s.updateLLMProvider)
-		r.Post("/registry/llm-providers/{providerID}/deprecate", s.deprecateLLMProvider)
+			r.Post("/squads/{squadID}/agents", s.createAgent)
+			r.Get("/squads/{squadID}/agents", s.listAgents)
+			r.Get("/agents/{agentID}", s.getAgent)
+			r.Patch("/agents/{agentID}", s.updateAgent)
+			r.Delete("/agents/{agentID}", s.deleteAgent)
+			r.Post("/agents/{agentID}/identity", s.createAgentIdentity)
+			r.Post("/agents/{agentID}/identity/rotate", s.rotateAgentIdentity)
+			r.Get("/agents/{agentID}/permissions", s.listAgentPermissions)
+			r.Put("/agents/{agentID}/permissions", s.setAgentPermissions)
 
-		r.Post("/registry/{registryType}", s.createRegistryResource)
-		r.Get("/registry/{registryType}", s.listRegistryResources)
-		r.Get("/registry/{registryType}/{resourceID}", s.getRegistryResource)
-		r.Patch("/registry/{registryType}/{resourceID}", s.updateRegistryResource)
-		r.Post("/registry/{registryType}/{resourceID}/deprecate", s.deprecateRegistryResource)
+			r.Get("/squads/{squadID}/board", s.getBoard)
+			r.Get("/squads/{squadID}/metering", s.getSquadMetering)
+			r.Get("/squads/{squadID}/audit", s.listSquadAudit)
+			r.Post("/squads/{squadID}/board/tasks", s.createTask)
+			r.Get("/tasks/{taskID}", s.getTask)
+			r.Patch("/tasks/{taskID}", s.updateTask)
+			r.Post("/tasks/{taskID}/move", s.moveTask)
+			r.Delete("/tasks/{taskID}", s.deleteTask)
+			r.Get("/agents/{agentID}/metering", s.getAgentMetering)
 
-		r.Get("/metering/summary", s.getMeteringSummary)
-		r.Get("/audit", s.listAudit)
+			r.Post("/registry/llm-providers", s.createLLMProvider)
+			r.Get("/registry/llm-providers", s.listLLMProviders)
+			r.Get("/registry/llm-providers/{providerID}", s.getLLMProvider)
+			r.Patch("/registry/llm-providers/{providerID}", s.updateLLMProvider)
+			r.Post("/registry/llm-providers/{providerID}/deprecate", s.deprecateLLMProvider)
+
+			r.Post("/registry/{registryType}", s.createRegistryResource)
+			r.Get("/registry/{registryType}", s.listRegistryResources)
+			r.Get("/registry/{registryType}/{resourceID}", s.getRegistryResource)
+			r.Patch("/registry/{registryType}/{resourceID}", s.updateRegistryResource)
+			r.Post("/registry/{registryType}/{resourceID}/deprecate", s.deprecateRegistryResource)
+
+			r.Get("/metering/summary", s.getMeteringSummary)
+			r.Get("/audit", s.listAudit)
+		})
 	})
 
 	return r
@@ -151,6 +165,12 @@ func (noopCRWriter) UpsertAgent(context.Context, *domain.Agent, *domain.AgentIde
 func (noopCRWriter) DeleteAgent(context.Context, *domain.Agent) error { return nil }
 
 type principalKey struct{}
+type agentPrincipalKey struct{}
+
+type agentPrincipal struct {
+	Agent    *domain.Agent
+	Identity *domain.AgentIdentity
+}
 
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +221,42 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 func currentUser(ctx context.Context) *domain.User {
 	u, _ := ctx.Value(principalKey{}).(*domain.User)
 	return u
+}
+
+func currentAgent(ctx context.Context) *agentPrincipal {
+	p, _ := ctx.Value(agentPrincipalKey{}).(*agentPrincipal)
+	return p
+}
+
+func (s *Server) authenticateAgent(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agentID := strings.TrimSpace(r.Header.Get("X-Skquad-Agent-ID"))
+		if agentID == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing agent id")
+			return
+		}
+		token := bearerToken(r.Header.Get("Authorization"))
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+			return
+		}
+		agent, err := s.store.GetAgent(r.Context(), agentID)
+		if err != nil {
+			writeStorageError(w, err)
+			return
+		}
+		identity, err := s.store.GetAgentIdentity(r.Context(), agent.ID)
+		if err != nil {
+			writeStorageError(w, err)
+			return
+		}
+		if !matchesAgentCredential(token, identity) {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid agent credential")
+			return
+		}
+		principal := &agentPrincipal{Agent: agent, Identity: identity}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), agentPrincipalKey{}, principal)))
+	})
 }
 
 func (s *Server) requirePlatformAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -1138,6 +1194,120 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, created)
 }
 
+func (s *Server) listCurrentAgentTasks(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	tasks, err := s.store.ListAgentTasks(r.Context(), principal.Agent.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tasks)
+}
+
+func (s *Server) claimCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	task, err := s.store.ClaimNextTask(r.Context(), principal.Agent.ID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, domain.AgentIdle); err != nil {
+				writeStorageError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, domain.AgentBusy); err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	s.recordAgentAudit(r, principal.Agent.ID, "task.claim", "task", task.ID, task.SquadID, nil)
+	writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) startCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
+	s.setCurrentAgentTaskStatus(w, r, domain.TaskInProgress, domain.AgentBusy, "task.start")
+}
+
+func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Status domain.TaskStatus `json:"status"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	if req.Status == "" {
+		req.Status = domain.TaskInReview
+	}
+	if req.Status != domain.TaskInReview && req.Status != domain.TaskDone {
+		writeError(w, http.StatusBadRequest, "bad_request", "status must be in-review or done")
+		return
+	}
+	s.setCurrentAgentTaskStatus(w, r, req.Status, domain.AgentIdle, "task.complete")
+}
+
+func (s *Server) blockCurrentAgentTask(w http.ResponseWriter, r *http.Request) {
+	s.setCurrentAgentTaskStatus(w, r, domain.TaskBlocked, domain.AgentIdle, "task.block")
+}
+
+func (s *Server) currentAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	var req struct {
+		Status domain.AgentStatus `json:"status"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	if req.Status == "" {
+		req.Status = principal.Agent.Status
+	}
+	if req.Status != domain.AgentIdle && req.Status != domain.AgentBusy && req.Status != domain.AgentError {
+		writeError(w, http.StatusBadRequest, "bad_request", "status is invalid")
+		return
+	}
+	if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, req.Status); err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	agent, err := s.store.GetAgent(r.Context(), principal.Agent.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, agent)
+}
+
+func (s *Server) setCurrentAgentTaskStatus(w http.ResponseWriter, r *http.Request, taskStatus domain.TaskStatus, agentStatus domain.AgentStatus, action string) {
+	principal := currentAgent(r.Context())
+	task, err := s.store.GetTask(r.Context(), chi.URLParam(r, "taskID"))
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if task.AssigneeAgentID != principal.Agent.ID {
+		writeError(w, http.StatusForbidden, "forbidden", "task is not assigned to this agent")
+		return
+	}
+	task.Status = taskStatus
+	updated, err := s.store.UpdateTask(r.Context(), task)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	if err := s.store.SetAgentStatus(r.Context(), principal.Agent.ID, agentStatus); err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	s.recordAgentAudit(r, principal.Agent.ID, action, "task", updated.ID, updated.SquadID, nil)
+	writeJSON(w, http.StatusOK, updated)
+}
+
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	task, ok := s.loadAccessibleTask(w, r)
 	if !ok {
@@ -1401,6 +1571,21 @@ func (s *Server) recordUserAudit(r *http.Request, action, resourceType, resource
 	})
 }
 
+func (s *Server) recordAgentAudit(r *http.Request, agentID, action, resourceType, resourceID, squadID string, metadata json.RawMessage) {
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
+	_ = s.store.RecordAudit(r.Context(), &domain.AuditEntry{
+		ActorType:    "agent",
+		ActorID:      agentID,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		SquadID:      squadID,
+		Metadata:     metadata,
+	})
+}
+
 func (s *Server) upsertAgentCR(ctx context.Context, agent *domain.Agent) error {
 	identity, err := s.store.GetAgentIdentity(ctx, agent.ID)
 	if err != nil {
@@ -1480,4 +1665,22 @@ func generatedCredentialRef(namespace, agentID string) string {
 
 func generatedVirtualKeyRef(agentID string) string {
 	return "llm-gateway://virtual-keys/agent-" + agentID
+}
+
+func bearerToken(authorization string) string {
+	const prefix = "Bearer "
+	if !strings.HasPrefix(authorization, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
+}
+
+func matchesAgentCredential(token string, identity *domain.AgentIdentity) bool {
+	if token == "" || identity == nil {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(identity.CredentialRef)) == 1 {
+		return true
+	}
+	return identity.VirtualKeyRef != "" && subtle.ConstantTimeCompare([]byte(token), []byte(identity.VirtualKeyRef)) == 1
 }

@@ -24,7 +24,11 @@ agent-runtime/
 - Reads mounted Kubernetes Secret directories for the agent credential and
   optional LLM gateway virtual key without returning raw secret values.
 - Exposes `/healthz` and `/readyz` through FastAPI.
+- Provides a small control-plane client for agent-authenticated task listing,
+  claiming, completion/blocking, and idle/busy/error heartbeats.
+- Provides `poll_once`, the first runtime work-loop primitive: claim the next
+  assigned task and report idle/busy without faking task execution.
 - Provides the `skquad-agent-runtime` console script.
 
-The task pickup loop, plugin loader, LiteLLM calls, inbox draining, and memory
-store are still upcoming slices.
+The full task execution loop, plugin loader, LiteLLM calls, inbox draining, and
+memory store are still upcoming slices.

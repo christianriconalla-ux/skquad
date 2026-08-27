@@ -29,12 +29,12 @@ operator/
 - First `Agent` reconciler: resolves the owning squad namespace, creates/updates
   the agent Deployment, sets scale-to-zero replicas from `desiredActive`, uses
   the squad agent ServiceAccount, mounts optional agent credential/virtual-key
-  Secrets, passes runtime bootstrap env vars, configures `/healthz` and
-  `/readyz` probes, and writes basic ready status
+  Secrets, passes runtime bootstrap env vars including control-plane/gateway
+  URLs, configures `/healthz` and `/readyz` probes, and writes basic ready status
 - Helm CRDs for `squads.skquad.io` and `agents.skquad.io`
 - Helm operator templates for ServiceAccount, ClusterRole, ClusterRoleBinding,
   and Deployment
 
-Next slices are control-plane/runtime chart templates, configurable egress
-policy generation from registry grants, and the agent runtime bootstrap
-contract.
+Next slices are operator scale-up from pending assigned tasks, configurable
+egress policy generation from registry grants, and stronger credential Secret
+material generation.

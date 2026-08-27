@@ -70,6 +70,8 @@ apiServer:
   imagePullPolicy: IfNotPresent
   authMode: dev
   databaseUrl: ""
+  runtimeControlPlaneUrl: ""
+  runtimeLlmGatewayUrl: ""
   databaseUrlSecret:
     name: ""
     key: database-url

@@ -885,6 +885,96 @@ func (p *PostgresStore) ListTasks(ctx context.Context, boardID string, status do
 	return tasks, mapPgErr(rows.Err())
 }
 
+func (p *PostgresStore) ListAgentTasks(ctx context.Context, agentID string) ([]*domain.Task, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id::text, board_id::text, squad_id::text, title, description, status,
+		       coalesce(assignee_agent_id::text, ''), created_by_type, created_by_id::text,
+		       position, created_at, updated_at
+		FROM tasks
+		WHERE assignee_agent_id = $1
+		ORDER BY status, position
+	`, agentID)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+
+	var tasks []*domain.Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, mapPgErr(rows.Err())
+}
+
+func (p *PostgresStore) ClaimNextTask(ctx context.Context, agentID string) (*domain.Task, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer tx.Rollback(ctx)
+
+	task, err := p.claimExistingInProgress(ctx, tx, agentID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	if errors.Is(err, ErrNotFound) {
+		task, err = p.claimTodoTask(ctx, tx, agentID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapPgErr(err)
+	}
+	return task, nil
+}
+
+func (p *PostgresStore) claimExistingInProgress(ctx context.Context, tx pgx.Tx, agentID string) (*domain.Task, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT id::text, board_id::text, squad_id::text, title, description, status,
+		       coalesce(assignee_agent_id::text, ''), created_by_type, created_by_id::text,
+		       position, created_at, updated_at
+		FROM tasks
+		WHERE assignee_agent_id = $1 AND status = $2
+		ORDER BY updated_at
+		LIMIT 1
+		FOR UPDATE
+	`, agentID, domain.TaskInProgress)
+	return scanTask(row)
+}
+
+func (p *PostgresStore) claimTodoTask(ctx context.Context, tx pgx.Tx, agentID string) (*domain.Task, error) {
+	row := tx.QueryRow(ctx, `
+		WITH candidate AS (
+			SELECT id, board_id
+			FROM tasks
+			WHERE assignee_agent_id = $1 AND status = $2
+			ORDER BY position
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		),
+		next_position AS (
+			SELECT coalesce(max(t.position) + 1, 1) AS position
+			FROM tasks t
+			JOIN candidate c ON c.board_id = t.board_id
+			WHERE t.status = $3
+		)
+		UPDATE tasks
+		SET status = $3,
+		    position = (SELECT position FROM next_position),
+		    updated_at = now()
+		WHERE id = (SELECT id FROM candidate)
+		RETURNING id::text, board_id::text, squad_id::text, title, description, status,
+		          coalesce(assignee_agent_id::text, ''), created_by_type, created_by_id::text,
+		          position, created_at, updated_at
+	`, agentID, domain.TaskTodo, domain.TaskInProgress)
+	return scanTask(row)
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }

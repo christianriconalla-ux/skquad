@@ -41,6 +41,8 @@ type Config struct {
 	K8sGroupVersion string // e.g. skquad.io/v1
 	K8sInsecure     bool   // skip TLS verification (dev)
 	AgentImage      string // image written into Agent CR specs
+	ControlPlaneURL string // URL written into Agent CR specs for runtime callbacks
+	LLMGatewayURL   string // URL written into Agent CR specs for LLM gateway calls
 
 	// Behaviour
 	DefaultIdleTimeout time.Duration
@@ -63,6 +65,8 @@ func Load() (*Config, error) {
 		K8sGroupVersion:    envOr("SKQUAD_K8S_GROUP_VERSION", "skquad.io/v1"),
 		K8sInsecure:        envBool("SKQUAD_K8S_INSECURE", false),
 		AgentImage:         envOr("SKQUAD_AGENT_IMAGE", "skquad/agent-runtime:0.1.0"),
+		ControlPlaneURL:    os.Getenv("SKQUAD_CONTROL_PLANE_URL"),
+		LLMGatewayURL:      os.Getenv("SKQUAD_LLM_GATEWAY_URL"),
 		DefaultIdleTimeout: envDuration("SKQUAD_DEFAULT_IDLE_TIMEOUT", 5*time.Minute),
 	}
 

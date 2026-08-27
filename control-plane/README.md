@@ -44,6 +44,8 @@ API for the operator. Optional settings:
 - `SKQUAD_K8S_GROUP_VERSION` (default `skquad.io/v1`)
 - `SKQUAD_K8S_INSECURE` (default `false`, development only)
 - `SKQUAD_AGENT_IMAGE` (default `skquad/agent-runtime:0.1.0`)
+- `SKQUAD_CONTROL_PLANE_URL` (optional runtime callback URL written to Agent CRs)
+- `SKQUAD_LLM_GATEWAY_URL` (optional gateway URL written to Agent CRs)
 
 Implemented slice:
 
@@ -53,6 +55,8 @@ Implemented slice:
 - Agent CRUD for squads
 - Agent identity create/rotate endpoints with generated secret/key references
 - Agent registry permission list/set endpoints
+- Agent-facing `/api/v1/agents/me` endpoints for task listing, task claiming,
+  task start/complete/block, and status heartbeats
 - Board retrieval and task create/update/move/delete
 - Access grant create/list/delete
 - LLM provider registry create/list/get/update/deprecate
@@ -70,5 +74,7 @@ Implemented slice:
 - OIDC bearer JWT validation with first-login user provisioning
 - Owner/admin/granted-user read authorization for squad resources
 - Platform-admin authorization for registry writes
+- Agent credential auth for runtime endpoints using current identity references
 
-Next slices are agent-facing auth and operator reconciliation.
+Next slices are real agent credential secret material, the full runtime task
+execution loop, and operator scale-up from pending assigned tasks.

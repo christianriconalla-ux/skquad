@@ -411,6 +411,94 @@ func TestAgentPermissionsSetAndList(t *testing.T) {
 	require.Equal(t, "not_found", body["error"]["code"])
 }
 
+func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Runtime Task Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Runtime Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Claim me",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+
+	var listed []domain.Task
+	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodGet, "/api/v1/agents/me/tasks", nil, http.StatusOK, &listed)
+	require.Len(t, listed, 1)
+	require.Equal(t, task.ID, listed[0].ID)
+
+	var claimed domain.Task
+	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
+	require.Equal(t, task.ID, claimed.ID)
+	require.Equal(t, domain.TaskInProgress, claimed.Status)
+
+	var claimedAgain domain.Task
+	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimedAgain)
+	require.Equal(t, claimed.ID, claimedAgain.ID)
+
+	var currentAgent domain.Agent
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID, nil, http.StatusOK, &currentAgent)
+	require.Equal(t, domain.AgentBusy, currentAgent.Status)
+
+	var completed domain.Task
+	doAgentJSON(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]string{
+		"status": string(domain.TaskDone),
+	}, http.StatusOK, &completed)
+	require.Equal(t, domain.TaskDone, completed.Status)
+
+	doAgentJSONNoBody(t, handler, agent.ID, identity.CredentialRef, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusNoContent)
+
+	doJSON(t, handler, http.MethodGet, "/api/v1/agents/"+agent.ID, nil, http.StatusOK, &currentAgent)
+	require.Equal(t, domain.AgentIdle, currentAgent.Status)
+
+	var audit []domain.AuditEntry
+	doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/audit", nil, http.StatusOK, &audit)
+	require.Contains(t, auditActions(audit), "task.claim")
+	require.Contains(t, auditActions(audit), "task.complete")
+}
+
+func TestAgentRuntimeAuthRejectsInvalidCredential(t *testing.T) {
+	t.Parallel()
+
+	handler := New(testConfig(), storage.NewMemoryStore())
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Runtime Auth Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Runtime Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+
+	var body map[string]map[string]string
+	doAgentJSON(t, handler, agent.ID, "wrong", http.MethodGet, "/api/v1/agents/me/tasks", nil, http.StatusUnauthorized, &body)
+	require.Equal(t, "unauthorized", body["error"]["code"])
+
+	var currentAgent domain.Agent
+	doAgentJSON(t, handler, agent.ID, identity.VirtualKeyRef, http.MethodPost, "/api/v1/agents/me/heartbeat", map[string]string{
+		"status": string(domain.AgentError),
+	}, http.StatusOK, &currentAgent)
+	require.Equal(t, domain.AgentError, currentAgent.Status)
+}
+
 func testConfig() *config.Config {
 	return &config.Config{
 		Addr:               ":0",
@@ -448,6 +536,39 @@ func doJSONAuth(t *testing.T, handler http.Handler, authorization, method, path 
 	handler.ServeHTTP(rec, req)
 	require.Equal(t, wantStatus, rec.Code, rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), out))
+}
+
+func doAgentJSON(t *testing.T, handler http.Handler, agentID, token, method, path string, body any, wantStatus int, out any) {
+	t.Helper()
+	rec := doAgentRequest(t, handler, agentID, token, method, path, body)
+	require.Equal(t, wantStatus, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), out))
+}
+
+func doAgentJSONNoBody(t *testing.T, handler http.Handler, agentID, token, method, path string, body any, wantStatus int) {
+	t.Helper()
+	rec := doAgentRequest(t, handler, agentID, token, method, path, body)
+	require.Equal(t, wantStatus, rec.Code, rec.Body.String())
+}
+
+func doAgentRequest(t *testing.T, handler http.Handler, agentID, token, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var payload []byte
+	var err error
+	if body != nil {
+		payload, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("X-Skquad-Agent-ID", agentID)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
 }
 
 type fakeOIDC struct {

@@ -40,6 +40,10 @@ spec:
               value: {{ .Release.Namespace | quote }}
             - name: SKQUAD_AGENT_IMAGE
               value: {{ printf "%s:%s" .Values.image.agentRuntime.repository .Values.image.agentRuntime.tag | quote }}
+            - name: SKQUAD_CONTROL_PLANE_URL
+              value: {{ default (printf "http://%s.%s.svc.cluster.local:8080" (include "skquad.apiServerName" .) .Release.Namespace) .Values.apiServer.runtimeControlPlaneUrl | quote }}
+            - name: SKQUAD_LLM_GATEWAY_URL
+              value: {{ default (printf "http://%s.%s.svc.cluster.local:%v" (include "skquad.llmGatewayName" .) .Release.Namespace .Values.llmGateway.port) .Values.apiServer.runtimeLlmGatewayUrl | quote }}
             - name: SKQUAD_DEFAULT_IDLE_TIMEOUT
               value: {{ .Values.agent.idleTimeout | quote }}
             {{- if .Values.apiServer.databaseUrlSecret.name }}

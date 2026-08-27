@@ -49,6 +49,10 @@ spec:
                   type: string
                 virtualKeySecret:
                   type: string
+                controlPlaneUrl:
+                  type: string
+                llmGatewayUrl:
+                  type: string
                 permissions:
                   x-kubernetes-preserve-unknown-fields: true
                 idleTimeout:
