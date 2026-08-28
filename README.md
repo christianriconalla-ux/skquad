@@ -1,4 +1,28 @@
-# skquad
+<div align="center">
+
+  <pre>
+          __                         __
+   _____ / /__ ____  __  __ ____ _  / /
+  / ___// //_// __ \/ / / // __ `/ / /
+ (__  )/ ,&lt;  / /_/ / /_/ // /_/ / /_/
+/____//_/|_| \___\_\__,_/ \__,_/ (_)
+  </pre>
+
+  <div>
+    <a href="https://github.com/rossbrigoli/skquad/actions/workflows/ci.yml">
+      <img src="https://github.com/rossbrigoli/skquad/actions/workflows/ci.yml/badge.svg" alt="CI">
+    </a>
+    <a href="https://github.com/rossbrigoli/skquad/actions/workflows/images.yml">
+      <img src="https://github.com/rossbrigoli/skquad/actions/workflows/images.yml/badge.svg" alt="Images">
+    </a>
+    <a href="https://github.com/rossbrigoli/skquad/blob/main/LICENSE">
+      <img src="https://img.shields.io/badge/License-Apache%202.0-brightgreen.svg?style=flat" alt="License: Apache 2.0">
+    </a>
+    <img src="https://img.shields.io/badge/Status-Early%20vertical%20slice-yellow?style=flat" alt="Status: early vertical slice">
+  </div>
+</div>
+
+---
 
 > A Kubernetes-native control plane for building and operating squads of AI
 > agents.
