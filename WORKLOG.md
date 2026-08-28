@@ -1,5 +1,47 @@
 # WORKLOG
 
+## 2026-08-28 11:04:05 ACST
+
+- objective: Add README repository status header and ASCII skquad wordmark.
+- files changed: `README.md`, `WORKLOG.md`.
+- command/test run: `git diff --check -- README.md`.
+- result: Replaced the plain top-level README heading with a centered HTML header containing an ASCII `skquad` wordmark, CI and Images workflow badges, Apache 2.0 badge, and early vertical-slice status badge, while preserving the existing project summary and production-readiness warning.
+
+## 2026-08-28 10:57:52 ACST
+
+- objective: Harden semantic memory with embeddings and trust boundaries.
+- files changed: `control-plane/internal/domain/types.go`, `control-plane/internal/config/config.go`, `control-plane/internal/storage/storage.go`, `control-plane/internal/storage/memory.go`, `control-plane/internal/storage/postgres.go`, `control-plane/internal/storage/memory_test.go`, `control-plane/internal/storage/migrations/0003_agent_memory_trust.sql`, `control-plane/internal/httpapi/server.go`, `control-plane/internal/httpapi/server_test.go`, `agent-runtime/skquad_runtime/runtime.py`, `agent-runtime/tests/test_runtime.py`, `charts/skquad/values.yaml`, `charts/skquad/templates/api-server-deployment.yaml`, `README.md`, `docs/agent-runtime.md`, `docs/data-model.md`, `docs/implementation-status.md`, `docs/plugin-architecture.md`, `docs/security-threat-model.md`, `WORKLOG.md`.
+- command/test run: `go vet ./... && go test ./...` in `control-plane/`; `go vet ./... && go test ./...` in `operator/`; `python3 -m unittest discover -s tests` and `python3 -m py_compile skquad_runtime/*.py tests/*.py` in `agent-runtime/`; `python3 -m unittest discover -s tests/integration`; `helm lint charts/skquad`; default and ingress/external-secret Kubernetes server dry-runs; `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`; `git diff --check`.
+- result: Added memory trust/provenance/review metadata, raw-content separation, optional embedding vector persistence, and embedding-aware storage ranking when a query vector is supplied. Completion summaries now persist as bounded `raw_model_output` / `pending_review` memory, task-context limits expose whether embedding generation is enabled, Helm wires the disabled-by-default embedding config, and runtime prompts label memory as contextual evidence rather than executable instruction. Automatic embedding generation and approval/distillation workflow remain explicit follow-ups.
+
+## 2026-08-28 02:50:06 ACST
+
+- objective: Version database migrations with ledger and lock.
+- files changed: `control-plane/internal/storage/postgres.go`, `control-plane/internal/storage/postgres_test.go`, `control-plane/internal/storage/migrations/0002_schema_migrations.sql`, `control-plane/README.md`, `docs/data-model.md`, `docs/implementation-status.md`, `docs/operator-runbook.md`, `WORKLOG.md`.
+- command/test run: `go vet ./... && go test ./...` in `control-plane/`; `go vet ./... && go test ./...` in `operator/`; `python3 -m unittest discover -s tests` and `python3 -m py_compile skquad_runtime/*.py tests/*.py` in `agent-runtime/`; `python3 -m unittest discover -s tests/integration`; `helm lint charts/skquad`; default and ingress/external-secret Kubernetes server dry-runs; `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`; `git diff --check`.
+- result: Replaced repeated untracked startup migration execution with a Postgres advisory-lock-protected runner. Embedded migration files are sorted, checksummed with SHA-256, skipped when already recorded in `schema_migrations`, and rejected on checksum mismatch. Added `0002_schema_migrations.sql`, storage tests for embedded migration ordering/checksums, and docs for immutable migration history plus manual restore/forward-fix rollback boundaries.
+
+## 2026-08-28 02:38:19 ACST
+
+- objective: Reduce API Secret RBAC and agent network-policy blast radius.
+- files changed: `operator/cmd/manager/main.go`, `operator/internal/controller/squad_controller.go`, `operator/internal/controller/squad_controller_test.go`, `operator/README.md`, `charts/skquad/templates/api-server-deployment.yaml`, `charts/skquad/templates/api-server-rbac.yaml`, `charts/skquad/templates/llm-gateway-deployment.yaml`, `charts/skquad/templates/operator-deployment.yaml`, `charts/skquad/templates/operator-rbac.yaml`, `charts/skquad/templates/web-deployment.yaml`, `charts/skquad/README.md`, `docs/deployment-operator.md`, `docs/operator-runbook.md`, `docs/security-threat-model.md`, `WORKLOG.md`.
+- command/test run: `go vet ./... && go test ./...` in `control-plane/`; `go vet ./... && go test ./...` in `operator/`; `python3 -m unittest discover -s tests` and `python3 -m py_compile skquad_runtime/*.py tests/*.py` in `agent-runtime/`; `python3 -m unittest discover -s tests/integration`; `helm lint charts/skquad`; rendered RBAC shape check; default and ingress/external-secret Kubernetes server dry-runs; `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`; `git diff --check`.
+- result: Removed the chart-level API server ClusterRole/ClusterRoleBinding for generated agent Secrets. The operator now creates a per-squad namespace Role/RoleBinding that grants the API server ServiceAccount only generated Secret get/create/patch/update/delete authority in that squad namespace. Squad egress is tightened from broad control-plane namespace ports to pods labeled `api-server` or `llm-gateway` on the named `http` port. Chart-internal API URLs now target the API Service port instead of the pod port. Docs and operator tests now cover the new boundary; registry-derived external egress remains a documented follow-up.
+
+## 2026-08-28 02:24:37 ACST
+
+- objective: Harden OIDC identity, grant scopes, and audit guarantees.
+- files changed: `control-plane/internal/auth/oidc.go`, `control-plane/internal/domain/types.go`, `control-plane/internal/httpapi/server.go`, `control-plane/internal/httpapi/server_test.go`, `control-plane/internal/storage/storage.go`, `control-plane/internal/storage/memory.go`, `control-plane/internal/storage/postgres.go`, `control-plane/internal/storage/migrations/0001_init.sql`, `control-plane/README.md`, `docs/api-design.md`, `docs/data-model.md`, `docs/domain-model.md`, `docs/identity-security.md`, `docs/implementation-status.md`, `docs/security-threat-model.md`, `docs/web-app-ux.md`, `WORKLOG.md`.
+- command/test run: `go vet ./... && go test ./...` in `control-plane/`; `go vet ./... && go test ./...` in `operator/`; `python3 -m unittest discover -s tests` and `python3 -m py_compile skquad_runtime/*.py tests/*.py` in `agent-runtime/`; `python3 -m unittest discover -s tests/integration`; `helm lint charts/skquad`; default and ingress/external-secret Kubernetes server dry-runs; `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`; `git diff --check`.
+- result: OIDC users are keyed by issuer + subject with email/email_verified/name as profile data; explicitly unverified email claims are rejected. User and agent access grants now enforce scoped permissions (`read`, `talk`, `ping`, `add_task`, `admin`, `*`) on the relevant paths, cross-squad denials are audited, and access-grant/agent-permission mutations fail closed if their required pre-mutation audit event cannot be recorded. Docs now describe the shipped boundaries and remaining broader audit-hardening gap.
+
+## 2026-08-28 02:10:48 ACST
+
+- objective: Add message retry, expiry, and dead-letter handling.
+- files changed: `control-plane/internal/domain/types.go`, `control-plane/internal/storage/storage.go`, `control-plane/internal/storage/memory.go`, `control-plane/internal/storage/postgres.go`, `control-plane/internal/storage/migrations/0001_init.sql`, `control-plane/internal/httpapi/server.go`, `control-plane/internal/httpapi/server_test.go`, `agent-runtime/skquad_runtime/runtime.py`, `agent-runtime/tests/test_runtime.py`, `README.md`, `control-plane/README.md`, `agent-runtime/README.md`, `docs/api-design.md`, `docs/collaboration-messaging.md`, `docs/agent-runtime.md`, `docs/data-model.md`, `docs/implementation-status.md`, `docs/operator-runbook.md`, `docs/testing-strategy.md`, `WORKLOG.md`.
+- command/test run: `go vet ./... && go test ./...` in `control-plane/`; `go vet ./... && go test ./...` in `operator/`; `python3 -m unittest discover -s tests` and `python3 -m py_compile skquad_runtime/*.py tests/*.py` in `agent-runtime/`; `python3 -m unittest discover -s tests/integration`; `helm lint charts/skquad`; default and ingress/external-secret Kubernetes server dry-runs; `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`; `git diff --check`.
+- result: Added message attempt counts, max attempts, retry scheduling, expiry timestamps, and terminal reasons; runtime failure reporting via `/api/v1/agents/me/messages/{id}/fail`; retry-due inbox listing; pending-message wake logic that ignores delivered, expired, and dead messages while preserving scheduled retries; and docs describing remaining delegate/handoff materialization scope.
+
 ## 2026-08-28 01:02:44 ACST
 
 - objective: Add CI-runnable integration and end-to-end smoke coverage.
@@ -384,3 +426,10 @@
 - files changed: `web/package.json`, `web/package-lock.json`, `web/eslint.config.mjs`, `web/.eslintrc.json`, `web/next-env.d.ts`, `web/tsconfig.json`, `web/README.md`, `docs/implementation-status.md`, `WORKLOG.md`.
 - command/test run: `npm ci`; `npm audit --audit-level=moderate`; `npm run lint`; `NEXT_TELEMETRY_DISABLED=1 npm run build`; `git diff --check`.
 - result: Upgraded the web app to Next.js 16.3.3 and ESLint 9, replaced the removed `next lint` path with ESLint flat config, accepted Next 16's generated TypeScript defaults, and cleared the Next/PostCSS audit findings.
+
+## 2026-08-28 01:51:36 ACST
+
+- objective: Add task execution leases and durable results.
+- files changed: `README.md`, `agent-runtime/README.md`, `agent-runtime/skquad_runtime/runtime.py`, `agent-runtime/tests/test_runtime.py`, `control-plane/README.md`, `control-plane/internal/domain/types.go`, `control-plane/internal/httpapi/server.go`, `control-plane/internal/httpapi/server_test.go`, `control-plane/internal/storage/memory.go`, `control-plane/internal/storage/migrations/0001_init.sql`, `control-plane/internal/storage/postgres.go`, `control-plane/internal/storage/storage.go`, `docs/agent-runtime.md`, `docs/api-design.md`, `docs/data-model.md`, `docs/implementation-status.md`, `docs/kanban-task-lifecycle.md`, `docs/testing-strategy.md`, `WORKLOG.md`.
+- command/test run: `go test ./...` in `control-plane/`; `python3 -m unittest discover -s tests` and `python3 -m py_compile skquad_runtime/*.py` in `agent-runtime/`.
+- result: Added `task_executions` with worker IDs, active leases, fencing tokens, and terminal result summaries. Runtime claims now receive execution metadata, busy heartbeats can extend the lease, and complete/block calls require the execution fence. Stale completion fences are rejected with conflict. Durable task result summaries are stored atomically with task terminal status before optional best-effort memory persistence.
