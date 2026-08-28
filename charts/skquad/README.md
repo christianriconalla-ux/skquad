@@ -43,8 +43,8 @@ The current chart installs:
 - LLM gateway master-key Secret, ConfigMap, Deployment, and Service
 - Web Deployment and Service
 - Postgres Secret, Service, and StatefulSet for local/dev installs
-- Optional Kubernetes Ingress routing `/api` to the API server and `/` to the
-  web app
+- Optional Kubernetes Ingress or Traefik IngressRoute routing `/api` to the API
+  server and `/` to the web app
 - Runtime URL defaults so generated Agent CRs point pods back at the chart's API
   server and LLM gateway services
 - Agent runtime defaults for idle timeout, task poll interval, inbox poll

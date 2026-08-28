@@ -218,9 +218,10 @@ ingress:
 ```
 
 When enabled, the chart routes `/api` to the API server and `/` to the web app.
-Do not expose a development-auth deployment publicly. For the lab environment,
-create a Traefik IngressRoute or chart ingress for the internal `*.lab` host,
-then map the public `*.cloud.rossbrigoli.com` host through Cloudflare Tunnel.
+Use `ingressRoute.enabled=true` for Traefik-native clusters. Do not expose a
+development-auth deployment publicly. For the lab environment, create a
+Traefik IngressRoute or chart ingress for the internal `*.lab` host, then map
+the public `*.cloud.rossbrigoli.com` host through Cloudflare Tunnel.
 
 ## Troubleshooting
 

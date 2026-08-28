@@ -160,3 +160,8 @@ ingress:
           pathType: Prefix
           service: web
   tls: []
+
+ingressRoute:
+  enabled: false
+  entryPoints:
+    - web
