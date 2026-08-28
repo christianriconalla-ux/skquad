@@ -390,8 +390,13 @@ CREATE TABLE agent_memory (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id      uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     squad_id      uuid REFERENCES squads(id) ON DELETE CASCADE,
-    content       text NOT NULL,        -- the durable fact / decision
+    content       text NOT NULL,        -- bounded summary or durable fact
+    raw_content   text NOT NULL DEFAULT '',
+    trust_level   text NOT NULL DEFAULT 'raw_model_output',
+    provenance    text NOT NULL DEFAULT 'legacy',
+    review_status text NOT NULL DEFAULT 'pending_review',
     embedding     vector(1536),         -- dimension matches embedding model
+    embedding_model text NOT NULL DEFAULT '',
     source_task_id uuid REFERENCES tasks(id) ON DELETE SET NULL,
     metadata      jsonb NOT NULL DEFAULT '{}',
     created_at    timestamptz NOT NULL DEFAULT now()
@@ -405,13 +410,18 @@ CREATE INDEX idx_memory_embedding ON agent_memory
 - **Per-agent** memory by default; runtime reads always constrain by `agent_id`.
 - `squad_id` scopes memories to a squad/task context. Shared squad memory is a
   later policy decision, not implied by setting `squad_id` alone.
-- Semantic search via cosine similarity on `embedding`.
+- `trust_level` distinguishes raw model output from distilled or verified
+  memory. Runtime completion summaries are stored as `raw_model_output` and
+  `pending_review`; they are contextual evidence, not trusted instructions.
+- Semantic search uses cosine distance on `embedding` only when a query vector
+  is supplied. Without a query vector, retrieval falls back to bounded recency.
 
 Current implementation note: the embedded migration creates the pgvector-backed
-memory table and indexes. The control plane now supports bounded recent-memory
-reads for task context and writes task completion summaries as memory rows when
-the runtime explicitly requests persistence. Semantic embedding writes/search
-and artifact storage are still follow-up implementation slices.
+memory table and indexes. The control plane now persists trust/provenance/review
+metadata, optional embedding vectors, scoped recency retrieval, and
+embedding-aware storage ranking. Automatic embedding generation, explicit
+approval/distillation workflows, and artifact storage are still follow-up
+implementation slices.
 
 ---
 

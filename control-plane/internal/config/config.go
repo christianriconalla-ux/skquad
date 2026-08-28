@@ -49,6 +49,10 @@ type Config struct {
 	LiteLLMMasterKey     string // LiteLLM proxy admin key used for virtual-key provisioning
 	GatewayCallbackToken string // internal bearer token for gateway callbacks into the API
 
+	// Memory
+	MemoryEmbeddingsEnabled bool   // semantic memory retrieval uses embeddings only when true
+	MemoryEmbeddingModel    string // embedding model name for generated vectors
+
 	// Behaviour
 	DefaultIdleTimeout time.Duration
 }
@@ -75,6 +79,8 @@ func Load() (*Config, error) {
 		LiteLLMAdminURL:      os.Getenv("SKQUAD_LITELLM_ADMIN_URL"),
 		LiteLLMMasterKey:     os.Getenv("SKQUAD_LITELLM_MASTER_KEY"),
 		GatewayCallbackToken: os.Getenv("SKQUAD_GATEWAY_CALLBACK_TOKEN"),
+		MemoryEmbeddingsEnabled: envBool("SKQUAD_MEMORY_EMBEDDINGS_ENABLED", false),
+		MemoryEmbeddingModel:    os.Getenv("SKQUAD_MEMORY_EMBEDDING_MODEL"),
 		DefaultIdleTimeout:   envDuration("SKQUAD_DEFAULT_IDLE_TIMEOUT", 5*time.Minute),
 	}
 	if c.LiteLLMAdminURL == "" {

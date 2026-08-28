@@ -91,8 +91,11 @@
     (only permitted endpoints).
   - **Tool allow-lists** — agents can only invoke permitted tools/skills.
   - **Audit** all agent actions (LLM calls, tool calls, messages) for review.
-  - **Content provenance** — mark untrusted content; (later) injection
-    detection / guardrails at the gateway.
+  - **Content provenance** — task-context memory is labeled with trust level,
+    provenance, review status, and source task. Raw completion summaries remain
+    `raw_model_output` / `pending_review`; runtime prompts tell the model that
+    memory is contextual evidence, not executable instruction.
+  - Injection detection / guardrails at the gateway remain later work.
   - **Human review** — sensitive actions (e.g. cross-squad handoff, external
     writes) can require approval (later).
 

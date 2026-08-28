@@ -56,6 +56,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "skquad.llmGatewayMasterKeySecretName" . }}
                   key: {{ .Values.llmGateway.masterKeySecret.key }}
+            - name: SKQUAD_MEMORY_EMBEDDINGS_ENABLED
+              value: {{ .Values.apiServer.memoryEmbeddings.enabled | quote }}
+            - name: SKQUAD_MEMORY_EMBEDDING_MODEL
+              value: {{ .Values.apiServer.memoryEmbeddings.model | quote }}
             - name: SKQUAD_DEFAULT_IDLE_TIMEOUT
               value: {{ .Values.agent.idleTimeout | quote }}
             {{- if .Values.apiServer.databaseUrlSecret.name }}

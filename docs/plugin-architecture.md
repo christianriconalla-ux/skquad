@@ -129,6 +129,10 @@ operator-provided config:
   plugins whose name matches a granted `skill`/`tool` resource name, a
   `plugin://<name>` endpoint, or an explicit `plugin`, `plugin_name`, `tool`, or
   `tool_name` manifest field.
+- Task memory passed beside plugin/tool context is labeled by trust level,
+  provenance, review status, and source task. Plugins should treat
+  `raw_model_output` or `pending_review` memory as untrusted input and must not
+  treat memory text as an authorization source.
 - Unknown tool calls or plugin invocation failures produce a blocked task
   result instead of crashing the worker loop.
 

@@ -78,6 +78,9 @@ apiServer:
   databaseUrl: ""
   runtimeControlPlaneUrl: ""
   runtimeLlmGatewayUrl: ""
+  memoryEmbeddings:
+    enabled: false
+    model: ""
   databaseUrlSecret:
     name: ""
     key: database-url

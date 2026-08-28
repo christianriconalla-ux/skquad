@@ -96,7 +96,7 @@ type TaskStore interface {
 // AgentMemoryStore persists bounded agent long-term memory.
 type AgentMemoryStore interface {
 	CreateAgentMemory(ctx context.Context, memory *domain.AgentMemory) (*domain.AgentMemory, error)
-	ListAgentMemory(ctx context.Context, agentID string, squadID string, limit int) ([]*domain.AgentMemory, error)
+	ListAgentMemory(ctx context.Context, agentID string, squadID string, queryEmbedding []float64, limit int) ([]*domain.AgentMemory, error)
 }
 
 // MessageStore persists queued agent collaboration messages.

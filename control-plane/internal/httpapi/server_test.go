@@ -1026,10 +1026,14 @@ func TestAgentRuntimeCompletionCanPersistMemory(t *testing.T) {
 	}, http.StatusOK, &completed)
 	require.Equal(t, domain.TaskDone, completed.Status)
 
-	memories, err := store.ListAgentMemory(context.Background(), agent.ID, squad.ID, 10)
+	memories, err := store.ListAgentMemory(context.Background(), agent.ID, squad.ID, nil, 10)
 	require.NoError(t, err)
 	require.Len(t, memories, 1)
 	require.Equal(t, "Durable completion summary", memories[0].Content)
+	require.Equal(t, "Durable completion summary", memories[0].RawContent)
+	require.Equal(t, "raw_model_output", memories[0].TrustLevel)
+	require.Equal(t, "task_completion", memories[0].Provenance)
+	require.Equal(t, "pending_review", memories[0].ReviewStatus)
 	require.Equal(t, task.ID, memories[0].SourceTaskID)
 }
 

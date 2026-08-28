@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -1104,12 +1105,13 @@ func (m *MemoryStore) CreateAgentMemory(_ context.Context, memory *domain.AgentM
 	if len(created.Metadata) == 0 {
 		created.Metadata = []byte(`{}`)
 	}
+	applyMemoryDefaults(created)
 	created.CreatedAt = time.Now().UTC()
 	m.agentMemory[created.ID] = created
 	return cloneAgentMemory(created), nil
 }
 
-func (m *MemoryStore) ListAgentMemory(_ context.Context, agentID string, squadID string, limit int) ([]*domain.AgentMemory, error) {
+func (m *MemoryStore) ListAgentMemory(_ context.Context, agentID string, squadID string, queryEmbedding []float64, limit int) ([]*domain.AgentMemory, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if _, ok := m.agents[agentID]; !ok {
@@ -1124,19 +1126,72 @@ func (m *MemoryStore) ListAgentMemory(_ context.Context, agentID string, squadID
 			out = append(out, cloneAgentMemory(item))
 		}
 	}
-	slices.SortFunc(out, func(a, b *domain.AgentMemory) int {
-		if !a.CreatedAt.Equal(b.CreatedAt) {
-			if a.CreatedAt.After(b.CreatedAt) {
-				return -1
+	if len(queryEmbedding) > 0 {
+		slices.SortFunc(out, func(a, b *domain.AgentMemory) int {
+			aScore, aOK := cosineSimilarity(a.Embedding, queryEmbedding)
+			bScore, bOK := cosineSimilarity(b.Embedding, queryEmbedding)
+			if aOK != bOK {
+				if aOK {
+					return -1
+				}
+				return 1
 			}
-			return 1
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
+			if aOK && bOK && aScore != bScore {
+				if aScore > bScore {
+					return -1
+				}
+				return 1
+			}
+			return compareMemoryRecency(a, b)
+		})
+	} else {
+		slices.SortFunc(out, compareMemoryRecency)
+	}
 	if len(out) > limit {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func applyMemoryDefaults(memory *domain.AgentMemory) {
+	if memory.TrustLevel == "" {
+		memory.TrustLevel = "raw_model_output"
+	}
+	if memory.Provenance == "" {
+		memory.Provenance = "task_completion"
+	}
+	if memory.ReviewStatus == "" {
+		memory.ReviewStatus = "pending_review"
+	}
+	if memory.RawContent == "" && memory.TrustLevel == "raw_model_output" {
+		memory.RawContent = memory.Content
+	}
+}
+
+func compareMemoryRecency(a, b *domain.AgentMemory) int {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		if a.CreatedAt.After(b.CreatedAt) {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(a.ID, b.ID)
+}
+
+func cosineSimilarity(a, b []float64) (float64, bool) {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0, false
+	}
+	var dot, aNorm, bNorm float64
+	for i := range a {
+		dot += a[i] * b[i]
+		aNorm += a[i] * a[i]
+		bNorm += b[i] * b[i]
+	}
+	if aNorm == 0 || bNorm == 0 {
+		return 0, false
+	}
+	return dot / (math.Sqrt(aNorm) * math.Sqrt(bNorm)), true
 }
 
 func (m *MemoryStore) LeaseKubernetesOutbox(_ context.Context, limit int, leaseFor time.Duration) ([]*domain.KubernetesOutboxEvent, error) {
@@ -1457,6 +1512,7 @@ func cloneAgentMemory(memory *domain.AgentMemory) *domain.AgentMemory {
 	}
 	v := *memory
 	v.Metadata = slices.Clone(memory.Metadata)
+	v.Embedding = slices.Clone(memory.Embedding)
 	return &v
 }
 

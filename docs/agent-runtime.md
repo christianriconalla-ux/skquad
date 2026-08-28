@@ -231,17 +231,22 @@ messages that exhaust their retry budget.
 ## 9. Long-Term Memory (Postgres + pgvector)
 
 - A built-in **memory store** in Postgres with a `vector` column.
-- **Write:** on task completion (or on explicit "remember"), distill durable
-  facts/decisions into memory rows (with embeddings).
-- **Read:** at task start (or on demand), retrieve relevant memory rows by
-  semantic similarity and inject into the working context.
+- **Write:** on task completion, persist a bounded completion summary as
+  `raw_model_output` with provenance and `pending_review` status. A later
+  approval/distillation flow can promote selected rows to trusted memory.
+- **Read:** at task start, retrieve scoped memory through the control plane.
+  When an embedding query vector is available, storage ranks by vector
+  similarity; otherwise it falls back to bounded recent memory.
 - Scoped **per agent** (and optionally per squad for shared memory).
 
 Current implementation note: the runtime fetches bounded recent memory through
 the task-context endpoint and sends non-empty task completion summaries back to
-the control plane for per-agent memory persistence. Embedding generation,
-semantic vector retrieval, explicit "remember" commands, pruning, and artifact
-storage remain follow-up work.
+the control plane for per-agent memory persistence. Runtime prompt assembly
+labels each memory row with trust, provenance, review status, and source task,
+and instructs the model to treat memory as contextual evidence rather than
+commands. Automatic embedding generation is explicitly disabled by default via
+`SKQUAD_MEMORY_EMBEDDINGS_ENABLED=false`; explicit "remember" commands,
+approval UI, pruning, and artifact storage remain follow-up work.
 
 ---
 

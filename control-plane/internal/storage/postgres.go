@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -135,6 +136,38 @@ func readMigrationFiles() ([]migrationFile, error) {
 func migrationChecksum(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
+}
+
+func vectorLiteral(values []float64) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, strconv.FormatFloat(value, 'g', -1, 64))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func parseVectorText(raw string) []float64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	raw = strings.TrimPrefix(strings.TrimSuffix(raw, "]"), "[")
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]float64, 0, len(parts))
+	for _, part := range parts {
+		value, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+		if err != nil {
+			return nil
+		}
+		values = append(values, value)
+	}
+	return values
 }
 
 func ensureSchemaMigrations(ctx context.Context, conn *pgxpool.Conn) error {
@@ -1454,30 +1487,48 @@ func (p *PostgresStore) CompleteTaskExecution(ctx context.Context, agentID strin
 }
 
 func (p *PostgresStore) CreateAgentMemory(ctx context.Context, memory *domain.AgentMemory) (*domain.AgentMemory, error) {
+	applyMemoryDefaults(memory)
 	row := p.pool.QueryRow(ctx, `
 		INSERT INTO agent_memory (
-			agent_id, squad_id, content, source_task_id, metadata
+			agent_id, squad_id, content, raw_content, trust_level, provenance,
+			review_status, embedding, embedding_model, source_task_id, metadata
 		)
-		VALUES ($1, nullif($2, '')::uuid, $3, nullif($4, '')::uuid, $5)
+		VALUES (
+			$1, nullif($2, '')::uuid, $3, $4, $5, $6, $7,
+			nullif($8, '')::vector, $9, nullif($10, '')::uuid, $11
+		)
 		RETURNING id::text, agent_id::text, coalesce(squad_id::text, ''), content,
+		          raw_content, trust_level, provenance, review_status,
+		          coalesce(embedding::text, ''), embedding_model,
 		          coalesce(source_task_id::text, ''), metadata, created_at
-	`, memory.AgentID, memory.SquadID, memory.Content, memory.SourceTaskID, defaultJSON(memory.Metadata, "{}"))
+	`, memory.AgentID, memory.SquadID, memory.Content, memory.RawContent, memory.TrustLevel, memory.Provenance, memory.ReviewStatus, vectorLiteral(memory.Embedding), memory.EmbeddingModel, memory.SourceTaskID, defaultJSON(memory.Metadata, "{}"))
 	return scanAgentMemory(row)
 }
 
-func (p *PostgresStore) ListAgentMemory(ctx context.Context, agentID string, squadID string, limit int) ([]*domain.AgentMemory, error) {
+func (p *PostgresStore) ListAgentMemory(ctx context.Context, agentID string, squadID string, queryEmbedding []float64, limit int) ([]*domain.AgentMemory, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := p.pool.Query(ctx, `
+	queryVector := vectorLiteral(queryEmbedding)
+	orderBy := "created_at DESC, id"
+	if queryVector != "" {
+		orderBy = "CASE WHEN embedding IS NULL THEN 1 ELSE 0 END, embedding <=> $4::vector, created_at DESC, id"
+	}
+	args := []any{agentID, squadID, limit}
+	if queryVector != "" {
+		args = append(args, queryVector)
+	}
+	rows, err := p.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id::text, agent_id::text, coalesce(squad_id::text, ''), content,
+		       raw_content, trust_level, provenance, review_status,
+		       coalesce(embedding::text, ''), embedding_model,
 		       coalesce(source_task_id::text, ''), metadata, created_at
 		FROM agent_memory
 		WHERE agent_id = $1
 		  AND (squad_id IS NULL OR squad_id = nullif($2, '')::uuid)
-		ORDER BY created_at DESC, id
+		ORDER BY %s
 		LIMIT $3
-	`, agentID, squadID, limit)
+	`, orderBy), args...)
 	if err != nil {
 		return nil, mapPgErr(err)
 	}
@@ -1960,17 +2011,25 @@ func attachTaskExecution(task *domain.Task, exec *domain.TaskExecution) *domain.
 
 func scanAgentMemory(row scanner) (*domain.AgentMemory, error) {
 	var memory domain.AgentMemory
+	var embeddingText string
 	if err := row.Scan(
 		&memory.ID,
 		&memory.AgentID,
 		&memory.SquadID,
 		&memory.Content,
+		&memory.RawContent,
+		&memory.TrustLevel,
+		&memory.Provenance,
+		&memory.ReviewStatus,
+		&embeddingText,
+		&memory.EmbeddingModel,
 		&memory.SourceTaskID,
 		&memory.Metadata,
 		&memory.CreatedAt,
 	); err != nil {
 		return nil, mapPgErr(err)
 	}
+	memory.Embedding = parseVectorText(embeddingText)
 	return &memory, nil
 }
 

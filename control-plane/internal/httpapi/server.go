@@ -1535,7 +1535,7 @@ func (s *Server) getCurrentAgentTaskContext(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	memoryLimit := boundedIntQuery(r, "memory_limit", 10, 20)
-	memories, err := s.store.ListAgentMemory(r.Context(), principal.Agent.ID, task.SquadID, memoryLimit)
+	memories, err := s.store.ListAgentMemory(r.Context(), principal.Agent.ID, task.SquadID, nil, memoryLimit)
 	if err != nil {
 		writeStorageError(w, err)
 		return
@@ -1545,8 +1545,9 @@ func (s *Server) getCurrentAgentTaskContext(w http.ResponseWriter, r *http.Reque
 		Resources: resources,
 		Memory:    memories,
 		Limits: map[string]int{
-			"memory_limit":         memoryLimit,
-			"memory_content_chars": maxAgentMemoryContentChars,
+			"memory_limit":              memoryLimit,
+			"memory_content_chars":      maxAgentMemoryContentChars,
+			"memory_embeddings_enabled": boolAsInt(s.cfg.MemoryEmbeddingsEnabled),
 		},
 	})
 }
@@ -1900,6 +1901,7 @@ func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request
 			"kind":         "task_completion",
 			"task_status":  string(req.Status),
 			"execution_id": executionID,
+			"source":       "runtime_completion_summary",
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to prepare memory metadata")
@@ -1910,6 +1912,10 @@ func (s *Server) completeCurrentAgentTask(w http.ResponseWriter, r *http.Request
 			SquadID:      updated.SquadID,
 			SourceTaskID: updated.ID,
 			Content:      summary,
+			RawContent:   strings.TrimSpace(req.Summary),
+			TrustLevel:   "raw_model_output",
+			Provenance:   "task_completion",
+			ReviewStatus: "pending_review",
 			Metadata:     metadata,
 		}); err != nil {
 			auditMetadata, _ := json.Marshal(map[string]string{"error": err.Error(), "execution_id": executionID})
@@ -2441,6 +2447,13 @@ func boundedIntQuery(r *http.Request, key string, fallback int, maximum int) int
 		return maximum
 	}
 	return limit
+}
+
+func boolAsInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func trimRunes(value string, limit int) string {

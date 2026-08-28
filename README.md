@@ -96,7 +96,7 @@ Important gaps remain:
   drag and drop, and guided onboarding are not complete;
 - automatic LiteLLM key refresh or revocation after permission changes is not
   implemented;
-- semantic vector memory and durable artifact storage are planned;
+- automatic memory embedding generation and durable artifact storage are planned;
 - automatic task materialization for `delegate`/`handoff` messages is planned;
   and
 - production ingress, TLS, external-database operations, observability, and
