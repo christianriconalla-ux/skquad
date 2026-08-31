@@ -45,6 +45,7 @@ type Store interface {
 	storage.TaskStore
 	storage.AgentMemoryStore
 	storage.MessageStore
+	storage.WorkNotificationStore
 }
 
 // Server owns HTTP routing and request-scoped dependencies.
@@ -132,6 +133,7 @@ func newServer(cfg *config.Config, store Store, oidcAuth OIDCAuthenticator, crWr
 			r.Post("/messages", s.createCurrentAgentMessage)
 			r.Post("/messages/{messageID}/ack", s.ackCurrentAgentMessage)
 			r.Post("/messages/{messageID}/fail", s.failCurrentAgentMessage)
+			r.Get("/work/wait", s.waitCurrentAgentWork)
 			r.Post("/tasks/claim", s.claimCurrentAgentTask)
 			r.Get("/tasks/{taskID}/context", s.getCurrentAgentTaskContext)
 			r.Post("/tasks/{taskID}/start", s.startCurrentAgentTask)
@@ -1562,6 +1564,21 @@ func (s *Server) listCurrentAgentMessages(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, messages)
 }
 
+type agentWorkWaitResponse struct {
+	WorkAvailable bool `json:"work_available"`
+}
+
+func (s *Server) waitCurrentAgentWork(w http.ResponseWriter, r *http.Request) {
+	principal := currentAgent(r.Context())
+	timeout := durationSecondsQuery(r, "timeout_seconds", 25*time.Second, 60*time.Second)
+	available, err := s.store.WaitForAgentWork(r.Context(), principal.Agent.ID, timeout)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, agentWorkWaitResponse{WorkAvailable: available})
+}
+
 type messageRequest struct {
 	ToAgentID     string             `json:"to_agent_id"`
 	ToID          string             `json:"to_id"`
@@ -2447,6 +2464,22 @@ func boundedIntQuery(r *http.Request, key string, fallback int, maximum int) int
 		return maximum
 	}
 	return limit
+}
+
+func durationSecondsQuery(r *http.Request, key string, fallback time.Duration, maximum time.Duration) time.Duration {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback
+	}
+	seconds, err := strconv.ParseFloat(raw, 64)
+	if err != nil || seconds < 0 {
+		return fallback
+	}
+	duration := time.Duration(seconds * float64(time.Second))
+	if duration > maximum {
+		return maximum
+	}
+	return duration
 }
 
 func boolAsInt(value bool) int {

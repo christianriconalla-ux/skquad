@@ -48,8 +48,8 @@ observability:
 
 agent:
   idleTimeout: 300s
-  taskPollIntervalSeconds: "5"
-  inboxPollIntervalSeconds: "5"
+  taskPollIntervalSeconds: "30"
+  inboxPollIntervalSeconds: "30"
   inboxBatchSize: "5"
   taskTimeoutSeconds: "900"
   maxLLMSteps: "8"

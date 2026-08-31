@@ -206,15 +206,29 @@ The platform maintains a **registry of resources** that agents can use:
 
 ### 5.5 Performance & Scale (NFR-5)
 
-- (To be quantified during architecture — target squad/agent counts, task
-  throughput, and metering volume.)
+- v1 targets a maximum supported deployment size of about **100 squads** with
+  about **7 agents per squad** (roughly 700 agents total).
+- Control-plane HTTP API calls must complete in **less than 1 second** under
+  the supported v1 scale target, excluding external LLM/provider latency.
+- Postgres-backed task, message, audit, memory, and metering paths must be
+  designed and tested against this v1 scale before introducing a dedicated
+  message bus.
+- Higher-volume task throughput and metering-rate targets remain benchmark
+  items, but v1 architecture decisions should assume the scale envelope above.
 
 ---
 
 ## 6. Out of Scope for v1
 
-- (To be confirmed — candidates: fine-grained per-token budgeting/enforcement,
-  agent-to-agent SLAs, multi-cluster federation, on-prem single-node mode.)
+- Fine-grained per-token budgeting/enforcement beyond accurate metering.
+- Agent-to-agent SLA guarantees.
+- Multi-cluster federation.
+- Hosted multi-tenant control planes.
+- On-prem single-node/non-Kubernetes mode.
+
+v1 is a **single-tenant, Helm-installed Kubernetes platform** managed by the
+Skquad operator. The internal squad/agent isolation model remains load-bearing,
+but the first release is not a shared hosted service.
 
 ---
 
@@ -230,6 +244,8 @@ These are resolved in the ADRs ([`adr/`](adr/)) and the architecture
 | D3 | **Async message bus** | **Postgres-backed queue** for v1 (no new infra, simplest) behind a swappable interface (NATS later if needed). |
 | D4 | **Agent identity creation vs "minutes" flow** | The owner must create the agent identity + credential. Streamline with a **one-click "create agent identity"** the platform facilitates but the owner owns, so the fast path stays fast. |
 | D5 | **Predefined LLM provider vs BYOM** | Fast path uses a **predefined provider** (admin-registered, works out of the box). BYOM is the "bring your own key" path. |
+| D6 | **Buyer / deployment model** | v1 targets a **single organization operating its own Kubernetes install**, installed through the Helm chart and managed by the Skquad operator. Hosted multi-tenant service posture is future scope. |
+| D7 | **License posture** | Skquad remains **Apache License 2.0** for v1. |
 
 ---
 

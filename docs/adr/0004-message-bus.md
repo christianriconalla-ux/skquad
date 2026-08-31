@@ -42,10 +42,10 @@ option to move to a purpose-built broker.
 - **(+)** Access-grant enforcement lives in the control plane (single point).
 - **(−)** Postgres is not a real-time broker → higher latency, lower throughput
   than NATS/Kafka.
-- **(−)** Polling adds load; mitigate with `LISTEN/NOTIFY` or short poll
-  intervals.
+- **(−)** Postgres notification delivery is best-effort around reconnects and
+  delayed retries; keep relaxed fallback polling.
 - **Mitigation:** keep message volume modest in v1; use `LISTEN/NOTIFY` for
-  wake-ups; move to NATS if throughput/latency requirements grow.
+  task/inbox wake-ups; move to NATS if throughput/latency requirements grow.
 
 ## Alternatives Considered
 

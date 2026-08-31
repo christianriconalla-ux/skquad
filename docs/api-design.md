@@ -150,6 +150,7 @@ completing the same task after a lease has moved on.
 | `GET` | `/api/v1/agents/me/messages` | Get this agent's retry-due pending inbox. |
 | `POST` | `/api/v1/agents/me/messages/:id/ack` | Acknowledge a delivered message. |
 | `POST` | `/api/v1/agents/me/messages/:id/fail` | Report handler failure; schedules retry or dead-letters after attempts expire. |
+| `GET` | `/api/v1/agents/me/work/wait?timeout_seconds=N` | Long-poll for this agent's assigned task or ready inbox changes. Backed by Postgres `LISTEN/NOTIFY`; returns `{ work_available }` and falls back to timeout. |
 
 - **Cross-squad** messages are rejected (and audited) without an access grant:
   `talk` allows consult/reply, `ping` allows ping, and `add_task` allows

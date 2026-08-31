@@ -403,6 +403,17 @@ class ControlPlaneClient:
             return None
         return runtime_task(payload)
 
+    def wait_for_work(self, timeout_seconds: float) -> bool:
+        timeout = max(0.0, timeout_seconds)
+        payload = self._json(
+            "GET",
+            f"/api/v1/agents/me/work/wait?timeout_seconds={timeout:g}",
+            None,
+        )
+        if isinstance(payload, Mapping):
+            return bool(payload.get("work_available"))
+        return False
+
     def start_task(self, task_id: str) -> RuntimeTask:
         payload = self._json("POST", f"/api/v1/agents/me/tasks/{task_id}/start", None)
         return runtime_task(payload)
@@ -1107,15 +1118,32 @@ def run_task_loop(
     interval = poll_interval_seconds
     if interval is None:
         interval = min(config.task_poll_interval_seconds, config.inbox_poll_interval_seconds)
+    loop_client = client
     while not stop_requested(stop_event):
         try:
+            if loop_client is None and bootstrap_status(config).ready:
+                loop_client = ControlPlaneClient.from_bootstrap(config)
+            did_work = False
             if message_handler is not None:
-                run_inbox_once(config, message_handler, client, state=state)
-            run_task_once(config, handler, client, state=state)
+                inbox_result = run_inbox_once(config, message_handler, loop_client, state=state)
+                did_work = inbox_result.fetched > 0
+            task = run_task_once(config, handler, loop_client, state=state)
+            did_work = did_work or task is not None
         except Exception as exc:
             LOGGER.exception("agent runtime loop iteration failed")
             if state is not None:
                 state.loop_failed(str(exc))
+            sleeper(interval)
+            continue
+        wait_for_work = getattr(loop_client, "wait_for_work", None)
+        if not did_work and callable(wait_for_work):
+            try:
+                wait_for_work(interval)
+                continue
+            except Exception as exc:
+                LOGGER.warning("agent work wait failed; falling back to sleep", exc_info=True)
+                if state is not None:
+                    state.loop_failed(str(exc))
         sleeper(interval)
 
 

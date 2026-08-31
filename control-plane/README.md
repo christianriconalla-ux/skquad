@@ -101,6 +101,9 @@ Implemented slice:
 - Assigned `todo`/`in-progress` task state and pending inbox messages mirrored
   into the `Agent` CR so the operator can scale an agent up or keep it warm
   while work remains
+- Agent-authenticated work wait endpoint backed by Postgres `LISTEN/NOTIFY`
+  for assigned task and ready inbox wake-ups, with the in-memory store polling
+  as a development fallback
 
 Next slices are LiteLLM key refresh/revocation when grants change, semantic
 memory search, artifact persistence, and web implementation.

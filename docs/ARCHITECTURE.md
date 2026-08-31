@@ -22,10 +22,11 @@ skquad is a **two-plane** system on **vanilla Kubernetes**:
   namespace**. Agents are **scale-to-zero**: they only consume resources while
   working.
 
-The design optimises for **simplicity** (a small, boring core) and
-**extensibility** (capabilities added via **plugins**), while keeping
-**security** (OIDC, two-layer RBAC, audit) and **multi-tenant isolation**
-load-bearing.
+The v1 deployment model is a **single organization operating its own Kubernetes
+install** through the Helm chart and Skquad operator. The design optimises for
+**simplicity** (a small, boring core) and **extensibility** (capabilities added
+via **plugins**), while keeping **security** (OIDC, two-layer RBAC, audit) and
+squad/agent isolation load-bearing.
 
 ```mermaid
 flowchart TB

@@ -47,8 +47,8 @@ The current chart installs:
   server and `/` to the web app
 - Runtime URL defaults so generated Agent CRs point pods back at the chart's API
   server and LLM gateway services
-- Agent runtime defaults for idle timeout, task poll interval, inbox poll
-  interval, and inbox batch size.
+- Agent runtime defaults for idle timeout, task/inbox fallback poll intervals,
+  work-wait timeout, and inbox batch size.
 
 For production installs, set `postgres.existingSecret` and
 `apiServer.databaseUrlSecret.name` so database credentials and the API database
@@ -83,10 +83,11 @@ large migration or cold image pull makes startup exceed the default window.
 `llmGateway.migrationDir` sets `LITELLM_MIGRATION_DIR` to a writable path so
 LiteLLM can create baseline migration state if the target schema is not empty.
 
-Runtime polling defaults are configured through `agent.idleTimeout`,
+Runtime fallback polling defaults are configured through `agent.idleTimeout`,
 `agent.taskPollIntervalSeconds`, `agent.inboxPollIntervalSeconds`, and
-`agent.inboxBatchSize`. Runtime execution limits are configured through
-`agent.taskTimeoutSeconds`, `agent.maxLLMSteps`, and
+`agent.inboxBatchSize`. Idle runtimes long-poll the control plane for task or
+inbox wake-ups before using these fallback intervals. Runtime execution limits
+are configured through `agent.taskTimeoutSeconds`, `agent.maxLLMSteps`, and
 `agent.taskSummaryMaxChars`. The chart passes those values to the operator, and
 the operator injects the corresponding `SKQUAD_*` env vars into generated agent
 pods.

@@ -341,6 +341,23 @@ class RuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(calls[1].full_url, "http://control-plane/api/v1/agents/me/messages/message-1/ack")
         self.assertEqual(calls[2].full_url, "http://control-plane/api/v1/agents/me/messages/message-1/fail")
 
+    def test_control_plane_client_waits_for_work(self):
+        calls = []
+
+        def opener(req):
+            calls.append(req)
+            return FakeResponse(200, b'{"work_available":true}')
+
+        client = ControlPlaneClient("http://control-plane", "agent-1", "credential", opener=opener)
+
+        available = client.wait_for_work(12.5)
+
+        self.assertTrue(available)
+        self.assertEqual(
+            calls[0].full_url,
+            "http://control-plane/api/v1/agents/me/work/wait?timeout_seconds=12.5",
+        )
+
     def test_poll_once_reports_idle_without_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             credential = Path(tmp) / "agent"
@@ -540,6 +557,26 @@ class RuntimeBootstrapTest(unittest.TestCase):
 
             self.assertEqual(client.acked_messages, ["message-1", "message-2"])
             self.assertEqual(client.completed, [("task-1", "done")])
+
+    def test_task_loop_waits_for_work_after_idle_iteration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ready_config(tmp)
+            stop_event = StopAfterWait()
+            client = WaitingControlPlaneClient(claimed_task=None, stop_event=stop_event)
+
+            run_task_loop(
+                config,
+                StaticTaskHandler(TaskResult(status="done")),
+                message_handler=SuccessfulMessageHandler(),
+                client=client,
+                poll_interval_seconds=3.5,
+                stop_event=stop_event,
+                sleeper=stop_event.sleep,
+            )
+
+            self.assertEqual(client.wait_timeouts, [3.5])
+            self.assertEqual(stop_event.sleep_calls, 0)
+            self.assertEqual(client.heartbeats, ["idle"])
 
     def test_run_task_once_blocks_when_handler_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1009,6 +1046,18 @@ class FakeControlPlaneClient:
         return fake_task(task_id, status="blocked")
 
 
+class WaitingControlPlaneClient(FakeControlPlaneClient):
+    def __init__(self, claimed_task, stop_event, messages=None):
+        super().__init__(claimed_task, messages=messages)
+        self.stop_event = stop_event
+        self.wait_timeouts = []
+
+    def wait_for_work(self, timeout_seconds):
+        self.wait_timeouts.append(timeout_seconds)
+        self.stop_event.stopped = True
+        return False
+
+
 class StaticTaskHandler:
     def __init__(self, result):
         self.result = result
@@ -1025,12 +1074,18 @@ class SuccessfulMessageHandler:
 class StopAfterSleep:
     def __init__(self):
         self.stopped = False
+        self.sleep_calls = 0
 
     def is_set(self):
         return self.stopped
 
     def sleep(self, _seconds):
+        self.sleep_calls += 1
         self.stopped = True
+
+
+class StopAfterWait(StopAfterSleep):
+    pass
 
 
 class FakeContextClient:

@@ -32,6 +32,7 @@ type Store interface {
 	GrantStore
 	MeteringStore
 	AuditStore
+	WorkNotificationStore
 }
 
 // KubernetesOutboxStore persists durable Kubernetes reconciliation intents.
@@ -107,6 +108,12 @@ type MessageStore interface {
 	ListAgentMessageHistory(ctx context.Context, agentID string) ([]*domain.Message, error)
 	AckMessage(ctx context.Context, agentID string, messageID string) (*domain.Message, error)
 	FailMessage(ctx context.Context, agentID string, messageID string, reason string) (*domain.Message, error)
+}
+
+// WorkNotificationStore lets runtimes wait for assigned task or inbox changes
+// without polling the control plane on a fixed interval.
+type WorkNotificationStore interface {
+	WaitForAgentWork(ctx context.Context, agentID string, timeout time.Duration) (bool, error)
 }
 
 // RegistryStore persists registry resources (LLM providers + generic resources).

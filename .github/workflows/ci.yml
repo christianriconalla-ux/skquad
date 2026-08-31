@@ -224,6 +224,24 @@ jobs:
                     name: local-llm-api-key
                     key: api-key
           EOF
+      - name: Render Traefik IngressRoute chart
+        run: |
+          helm template skquad charts/skquad --namespace skquad-system -f - <<'EOF'
+          ingressRoute:
+            enabled: true
+            entryPoints:
+              - web
+          ingress:
+            hosts:
+              - host: skquad.lab
+                paths:
+                  - path: /api
+                    pathType: Prefix
+                    service: apiServer
+                  - path: /
+                    pathType: Prefix
+                    service: web
+          EOF
 
   web:
     name: Web

@@ -33,7 +33,9 @@ agent-runtime/
   heartbeats.
 - Provides `poll_once`, `run_inbox_once`, and `run_task_once` primitives. The
   runtime loop drains a bounded inbox batch and then processes at most one task
-  per iteration so messages and tasks do not starve each other.
+  per iteration so messages and tasks do not starve each other. After an idle
+  iteration it long-polls the control plane for assigned task or inbox wake-ups
+  before falling back to the configured poll interval.
 - Enforces configurable task execution limits: `SKQUAD_TASK_TIMEOUT_SECONDS`,
   `SKQUAD_MAX_LLM_STEPS`, and `SKQUAD_TASK_SUMMARY_MAX_CHARS`.
 - Provides a default `LiteLLMTaskHandler` that reads the mounted LLM gateway

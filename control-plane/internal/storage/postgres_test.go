@@ -41,3 +41,33 @@ func TestMigrationChecksumChangesWithContent(t *testing.T) {
 		t.Fatalf("checksums matched for different SQL: %s", first)
 	}
 }
+
+func TestAgentWorkNotifyMigrationDefinesTriggers(t *testing.T) {
+	t.Parallel()
+
+	migrations, err := readMigrationFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "0004_agent_work_notify.sql" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("0004_agent_work_notify.sql migration not found")
+	}
+	for _, want := range []string{
+		"pg_notify('skquad_agent_work'",
+		"trg_tasks_agent_work_notify",
+		"trg_messages_agent_work_notify",
+		"AFTER INSERT OR UPDATE OF assignee_agent_id, status ON tasks",
+		"AFTER INSERT OR UPDATE OF status, next_retry_at ON messages",
+	} {
+		if !regexp.MustCompile(regexp.QuoteMeta(want)).MatchString(sql) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}

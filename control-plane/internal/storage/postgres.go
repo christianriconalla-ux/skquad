@@ -26,6 +26,7 @@ import (
 var migrationFS embed.FS
 
 const migrationLockKey int64 = 0x5A51444144
+const agentWorkNotifyChannel = "skquad_agent_work"
 
 type migrationFile struct {
 	Version  string
@@ -1743,6 +1744,64 @@ func (p *PostgresStore) FailMessage(ctx context.Context, agentID string, message
 		          next_retry_at, expires_at, terminal_reason, created_at, delivered_at
 	`, messageID, agentID, domain.MessagePending, domain.MessageExpired, domain.MessageDead, defaultMessageRetryDelay, trimMessageReason(reason), maxMessageTerminalReason)
 	return scanMessage(row)
+}
+
+func (p *PostgresStore) WaitForAgentWork(ctx context.Context, agentID string, timeout time.Duration) (bool, error) {
+	conn, err := p.pool.Acquire(ctx)
+	if err != nil {
+		return false, mapPgErr(err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `LISTEN skquad_agent_work`); err != nil {
+		return false, mapPgErr(err)
+	}
+	defer func() {
+		_, _ = conn.Exec(context.Background(), `UNLISTEN skquad_agent_work`)
+	}()
+
+	available, err := p.hasReadyWork(ctx, agentID)
+	if err != nil || available || timeout <= 0 {
+		return available, err
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		notification, err := conn.Conn().WaitForNotification(waitCtx)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				if ctx.Err() != nil {
+					return false, ctx.Err()
+				}
+				return false, nil
+			}
+			return false, mapPgErr(err)
+		}
+		if notification.Channel == agentWorkNotifyChannel && notification.Payload == agentID {
+			return true, nil
+		}
+	}
+}
+
+func (p *PostgresStore) hasReadyWork(ctx context.Context, agentID string) (bool, error) {
+	var available bool
+	err := p.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM tasks
+			WHERE assignee_agent_id = $1
+			  AND status IN ($2, $3)
+		) OR EXISTS (
+			SELECT 1
+			FROM messages
+			WHERE to_agent_id = $1
+			  AND status = $4
+			  AND next_retry_at <= now()
+			  AND expires_at > now()
+		)
+	`, agentID, domain.TaskTodo, domain.TaskInProgress, domain.MessagePending).Scan(&available)
+	return available, mapPgErr(err)
 }
 
 func (p *PostgresStore) expireMessagesForAgent(ctx context.Context, agentID string) error {

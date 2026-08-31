@@ -2,8 +2,9 @@
 
 > **Status:** Draft v1
 >
-> skquad is an **enterprise, multi-tenant** platform. This document identifies
-> the **assets**, **trust boundaries**, **threats**, and **mitigations**. It
+> skquad v1 is an **enterprise, single-tenant Kubernetes platform** with
+> load-bearing squad/agent isolation inside one operator-managed install. This
+> document identifies the **assets**, **trust boundaries**, **threats**, and **mitigations**. It
 > complements [identity-security.md](identity-security.md) (the controls) and
 > [deployment-operator.md](deployment-operator.md) (isolation).
 >

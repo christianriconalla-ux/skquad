@@ -1224,6 +1224,41 @@ func TestAgentMessagingInboxFlow(t *testing.T) {
 	require.Contains(t, auditActions(audit), "message.ack")
 }
 
+func TestAgentWorkWaitReportsAvailableWork(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Wait Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Waiting Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+
+	var waitResponse agentWorkWaitResponse
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodGet, "/api/v1/agents/me/work/wait?timeout_seconds=0", nil, http.StatusOK, &waitResponse)
+	require.False(t, waitResponse.WorkAvailable)
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Wake runtime",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+	require.Equal(t, domain.TaskTodo, task.Status)
+
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodGet, "/api/v1/agents/me/work/wait?timeout_seconds=0", nil, http.StatusOK, &waitResponse)
+	require.True(t, waitResponse.WorkAvailable)
+}
+
 func TestAgentMessageFailuresRetryThenDeadLetter(t *testing.T) {
 	t.Parallel()
 

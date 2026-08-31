@@ -279,8 +279,8 @@ variables:
 | `SKQUAD_CONTROL_PLANE_URL` | Control-plane URL for task claim/status/heartbeat calls. |
 | `SKQUAD_LLM_GATEWAY_URL` | LLM gateway URL for model calls. |
 | `SKQUAD_TASK_LOOP_ENABLED` | Starts the runtime task loop when true. Defaults to true in the process entrypoint and is set true by the operator. |
-| `SKQUAD_TASK_POLL_INTERVAL_SECONDS` | Positive task-loop poll interval. Defaults to `5`. |
-| `SKQUAD_INBOX_POLL_INTERVAL_SECONDS` | Positive inbox poll interval. Defaults to `5`; the current loop sleeps for the lower of task/inbox intervals. |
+| `SKQUAD_TASK_POLL_INTERVAL_SECONDS` | Positive task-loop fallback poll interval and work-wait timeout. Runtime default is `5`; the Helm/operator default is `30` because idle agents long-poll for wake-ups. |
+| `SKQUAD_INBOX_POLL_INTERVAL_SECONDS` | Positive inbox fallback poll interval and work-wait timeout. Runtime default is `5`; the current loop waits for the lower of task/inbox intervals after an idle iteration. |
 | `SKQUAD_INBOX_BATCH_SIZE` | Maximum inbox messages handled per loop iteration. Defaults to `5`. |
 | `SKQUAD_TASK_TIMEOUT_SECONDS` | Maximum wall-clock seconds the runtime waits for a task handler before blocking the task. Defaults to `900`. |
 | `SKQUAD_MAX_LLM_STEPS` | Maximum LiteLLM/tool-call iterations per task. Defaults to `8`. |
@@ -303,11 +303,14 @@ titles, message payloads, completion summaries, or credential material.
 Current implementation includes a small control-plane client, a `poll_once`
 claim/heartbeat primitive, a handler-driven `run_task_once` execution
 primitive, a default LiteLLM/plugin handler, and permission-scoped runtime
-resource discovery. The runtime process starts the task loop when
-`SKQUAD_TASK_LOOP_ENABLED` is true while continuing to serve health/readiness
-probes. Dynamic importlib plugin loading is implemented; automatic registry
-package installation and richer plugin lifecycle hooks land in later
-registry/runtime slices.
+resource discovery. After an idle loop iteration, the runtime calls
+`GET /api/v1/agents/me/work/wait` so the control plane can wake it on
+Postgres-backed task or inbox notifications; if that wait path fails, the
+runtime falls back to sleeping for the configured interval. The runtime process
+starts the task loop when `SKQUAD_TASK_LOOP_ENABLED` is true while continuing
+to serve health/readiness probes. Dynamic importlib plugin loading is
+implemented; automatic registry package installation and richer plugin
+lifecycle hooks land in later registry/runtime slices.
 
 ---
 

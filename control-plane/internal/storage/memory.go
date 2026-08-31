@@ -1344,6 +1344,51 @@ func (m *MemoryStore) HasPendingMessages(_ context.Context, agentID string) (boo
 	return false, nil
 }
 
+func (m *MemoryStore) WaitForAgentWork(ctx context.Context, agentID string, timeout time.Duration) (bool, error) {
+	if timeout <= 0 {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.hasReadyWorkLocked(agentID, time.Now().UTC())
+	}
+	deadline := time.Now().UTC().Add(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		m.mu.Lock()
+		available, err := m.hasReadyWorkLocked(agentID, time.Now().UTC())
+		m.mu.Unlock()
+		if available || err != nil {
+			return available, err
+		}
+		if time.Now().UTC().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *MemoryStore) hasReadyWorkLocked(agentID string, now time.Time) (bool, error) {
+	if _, ok := m.agents[agentID]; !ok {
+		return false, ErrNotFound
+	}
+	for _, task := range m.tasks {
+		if task.AssigneeAgentID == agentID && (task.Status == domain.TaskTodo || task.Status == domain.TaskInProgress) {
+			return true, nil
+		}
+	}
+	for _, msg := range m.messages {
+		expireMessageIfDue(msg, now)
+		if msg.ToAgentID == agentID && msg.Status == domain.MessagePending && !msg.NextRetryAt.After(now) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *MemoryStore) ListAgentMessageHistory(_ context.Context, agentID string) ([]*domain.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

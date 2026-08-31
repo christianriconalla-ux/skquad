@@ -121,11 +121,11 @@ func TestAgentReconcilerCreatesDeployment(t *testing.T) {
 	if got := envValue(container.Env, "SKQUAD_TASK_LOOP_ENABLED"); got != "true" {
 		t.Fatalf("task loop enabled env = %q, want true", got)
 	}
-	if got := envValue(container.Env, "SKQUAD_TASK_POLL_INTERVAL_SECONDS"); got != "5" {
-		t.Fatalf("task poll interval env = %q, want 5", got)
+	if got := envValue(container.Env, "SKQUAD_TASK_POLL_INTERVAL_SECONDS"); got != "30" {
+		t.Fatalf("task poll interval env = %q, want 30", got)
 	}
-	if got := envValue(container.Env, "SKQUAD_INBOX_POLL_INTERVAL_SECONDS"); got != "5" {
-		t.Fatalf("inbox poll interval env = %q, want 5", got)
+	if got := envValue(container.Env, "SKQUAD_INBOX_POLL_INTERVAL_SECONDS"); got != "30" {
+		t.Fatalf("inbox poll interval env = %q, want 30", got)
 	}
 	if got := envValue(container.Env, "SKQUAD_INBOX_BATCH_SIZE"); got != "5" {
 		t.Fatalf("inbox batch size env = %q, want 5", got)

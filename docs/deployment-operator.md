@@ -149,9 +149,10 @@ When the operator sees an `Agent` CR:
    - **Secrets:** mount the agent's credential + LLM gateway virtual key when
      the Agent CR includes Kubernetes Secret names.
    - **Env:** agent config (role, registry provider ID, default model alias,
-     endpoints, `SKQUAD_TASK_LOOP_ENABLED=true`, task poll interval, inbox poll
-     interval, inbox batch size, task timeout, LLM step cap, and completion
-     summary cap).
+     endpoints, `SKQUAD_TASK_LOOP_ENABLED=true`, fallback task/inbox poll
+     intervals, inbox batch size, task timeout, LLM step cap, and completion
+     summary cap). Idle runtimes long-poll the control plane for task/inbox
+     wake-ups before using the fallback interval.
    - **Probes:** `/healthz`, `/readyz`.
    - **Resources:** requests/limits (configurable).
 2. **React to the control plane's desired activity signal.**
