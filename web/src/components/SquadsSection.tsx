@@ -1,20 +1,34 @@
 "use client";
 
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import {
   AccessGrant,
   Agent,
   AgentPermission,
   ApiState,
+  AuditEntry,
   BoardPayload,
   LLMProvider,
+  MeteringSummary,
   Message,
   RegistryResource,
   ResourceType,
   Squad,
+  Task,
   TaskStatus,
 } from "../lib/api";
-import { StateNotice, messageText, registryTypes, resourceLabel, taskStatuses } from "./shared";
+import {
+  StateNotice,
+  formatCost,
+  formatRelativeTime,
+  leaseState,
+  messageDeliveryNote,
+  messageText,
+  registryTypes,
+  resourceLabel,
+  taskStatuses,
+} from "./shared";
+import { SquadCockpit } from "./SquadCockpit";
 
 export type SquadTab = "overview" | "agents" | "tasks" | "grants";
 
@@ -69,6 +83,9 @@ export function SquadsSection({
   setGrantForm,
   onCreateGrant,
   onRevokeGrant,
+  squadMetering,
+  squadAudit,
+  agentCosts,
 }: {
   squads: ApiState<Squad[]>;
   selectedSquadID: string;
@@ -113,6 +130,9 @@ export function SquadsSection({
   setGrantForm: (form: { grantee_type: "user" | "agent"; grantee_id: string; permissions: string }) => void;
   onCreateGrant: (event: FormEvent<HTMLFormElement>) => void;
   onRevokeGrant: (id: string) => void;
+  squadMetering: ApiState<MeteringSummary>;
+  squadAudit: ApiState<AuditEntry[]>;
+  agentCosts: Record<string, MeteringSummary>;
 }) {
   const squadItems = squads.data || [];
   return (
@@ -185,24 +205,27 @@ export function SquadsSection({
           </div>
 
           {squadTab === "overview" && (
-            <form className="form-panel span-3" style={{ marginTop: 16 }} onSubmit={onUpdateMission}>
-              <h3>{selectedSquad.name}</h3>
-              <div className="key-grid">
-                <span>ID</span>
-                <strong>{selectedSquad.id}</strong>
-                <span>Owner</span>
-                <strong>{selectedSquad.owner_id || "-"}</strong>
-                <span>Namespace</span>
-                <strong>{selectedSquad.namespace || "-"}</strong>
-                <span>Status</span>
-                <strong>{selectedSquad.status || "active"}</strong>
-              </div>
-              <label>
-                Mission
-                <textarea value={missionDraft} onChange={(event) => setMissionDraft(event.target.value)} rows={3} />
-              </label>
-              <button type="submit">Save Mission</button>
-            </form>
+            <>
+              <SquadCockpit agents={agents} board={board} metering={squadMetering} audit={squadAudit} />
+              <form className="form-panel span-3" style={{ marginTop: 16 }} onSubmit={onUpdateMission}>
+                <h3>{selectedSquad.name}</h3>
+                <div className="key-grid">
+                  <span>ID</span>
+                  <strong>{selectedSquad.id}</strong>
+                  <span>Owner</span>
+                  <strong>{selectedSquad.owner_id || "-"}</strong>
+                  <span>Namespace</span>
+                  <strong>{selectedSquad.namespace || "-"}</strong>
+                  <span>Status</span>
+                  <strong>{selectedSquad.status || "active"}</strong>
+                </div>
+                <label>
+                  Mission
+                  <textarea value={missionDraft} onChange={(event) => setMissionDraft(event.target.value)} rows={3} />
+                </label>
+                <button type="submit">Save Mission</button>
+              </form>
+            </>
           )}
 
           {squadTab === "agents" && (
@@ -226,6 +249,7 @@ export function SquadsSection({
               resources={resources}
               onGrantPermission={onGrantPermission}
               onRevokePermission={onRevokePermission}
+              agentCosts={agentCosts}
             />
           )}
 
@@ -233,6 +257,7 @@ export function SquadsSection({
             <TasksTab
               board={board}
               agents={agents.data || []}
+              squadID={selectedSquad.id}
               taskForm={taskForm}
               setTaskForm={setTaskForm}
               onCreateTask={onCreateTask}
@@ -307,6 +332,7 @@ function AgentsTab({
   resources,
   onGrantPermission,
   onRevokePermission,
+  agentCosts,
 }: {
   agents: ApiState<Agent[]>;
   selectedAgentID: string;
@@ -327,6 +353,7 @@ function AgentsTab({
   resources: ApiState<RegistryResource[]>;
   onGrantPermission: (event: FormEvent<HTMLFormElement>) => void;
   onRevokePermission: (permission: AgentPermission) => void;
+  agentCosts: Record<string, MeteringSummary>;
 }) {
   const agentItems = agents.data || [];
   const selectedAgent = agentItems.find((agent) => agent.id === selectedAgentID) || null;
@@ -375,6 +402,7 @@ function AgentsTab({
                   <th>Agent</th>
                   <th>Status</th>
                   <th>Model</th>
+                  <th>Cost</th>
                   <th>Identity</th>
                 </tr>
               </thead>
@@ -385,8 +413,11 @@ function AgentsTab({
                       <strong>{agent.name}</strong>
                       <small>{agent.role || agent.id}</small>
                     </td>
-                    <td>{agent.status || "idle"}</td>
+                    <td>
+                      <span className={`agent-state ${agentStateClass(agent.status)}`}>{agent.status || "idle"}</span>
+                    </td>
                     <td>{agent.default_model || agent.default_provider_id || "-"}</td>
+                    <td className="numeric">{agentCosts[agent.id] ? formatCost(agentCosts[agent.id]) : "-"}</td>
                     <td>
                       <div className="button-row">
                         <button type="button" className="secondary small" onClick={() => onCreateIdentity(agent.id)}>
@@ -464,13 +495,20 @@ function AgentsTab({
           <>
             <div className="message-list">
               <StateNotice state={chat} empty="No chat messages yet" />
-              {(chat.data || []).map((message) => (
-                <article key={message.id} className="message-item">
-                  <strong>{message.from_type}</strong>
-                  <span>{messageText(message)}</span>
-                  <small>{message.status} · {message.type}</small>
-                </article>
-              ))}
+              {(chat.data || []).map((message) => {
+                const note = messageDeliveryNote(message);
+                return (
+                  <article key={message.id} className="message-item">
+                    <strong>{message.from_type}</strong>
+                    <span>{messageText(message)}</span>
+                    <small>
+                      <span className={`delivery ${deliveryClass(message.status)}`}>{message.status}</span> · {message.type}
+                      {note && ` · ${note}`}
+                    </small>
+                    {message.terminal_reason && <small className="delivery-reason">{message.terminal_reason}</small>}
+                  </article>
+                );
+              })}
             </div>
             <label>
               Message to {selectedAgent.name}
@@ -486,9 +524,12 @@ function AgentsTab({
   );
 }
 
+const assigneeFilterKey = "skquad.board.assigneeFilter";
+
 function TasksTab({
   board,
   agents,
+  squadID,
   taskForm,
   setTaskForm,
   onCreateTask,
@@ -498,6 +539,7 @@ function TasksTab({
 }: {
   board: ApiState<BoardPayload>;
   agents: Agent[];
+  squadID: string;
   taskForm: { title: string; description: string; assignee_agent_id: string };
   setTaskForm: (form: { title: string; description: string; assignee_agent_id: string }) => void;
   onCreateTask: (event: FormEvent<HTMLFormElement>) => void;
@@ -505,7 +547,38 @@ function TasksTab({
   onAssignTask: (taskID: string, assigneeAgentID: string) => void;
   onDeleteTask: (taskID: string) => void;
 }) {
-  const tasks = board.data?.tasks || [];
+  // "" = everyone, "__unassigned" = no agent assigned, otherwise an agent id.
+  const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [activeOnly, setActiveOnly] = useState(false);
+
+  useEffect(() => {
+    setAssigneeFilter(window.localStorage.getItem(`${assigneeFilterKey}:${squadID}`) || "");
+  }, [squadID]);
+
+  function changeAssigneeFilter(value: string) {
+    setAssigneeFilter(value);
+    if (value) {
+      window.localStorage.setItem(`${assigneeFilterKey}:${squadID}`, value);
+    } else {
+      window.localStorage.removeItem(`${assigneeFilterKey}:${squadID}`);
+    }
+  }
+
+  const allTasks = board.data?.tasks || [];
+  const tasks = allTasks.filter((task) => {
+    if (assigneeFilter === "__unassigned" && task.assignee_agent_id) {
+      return false;
+    }
+    if (assigneeFilter && assigneeFilter !== "__unassigned" && task.assignee_agent_id !== assigneeFilter) {
+      return false;
+    }
+    if (activeOnly && leaseState(task) === "idle") {
+      return false;
+    }
+    return true;
+  });
+  const runningCount = allTasks.filter((task) => leaseState(task) !== "idle").length;
+
   return (
     <div className="workflow-grid">
       <form className="form-panel" onSubmit={onCreateTask}>
@@ -533,7 +606,38 @@ function TasksTab({
       </form>
 
       <div className="span-2">
+        <div className="filter-bar">
+          <label>
+            Assignee
+            <select value={assigneeFilter} onChange={(event) => changeAssigneeFilter(event.target.value)}>
+              <option value="">Everyone</option>
+              <option value="__unassigned">Unassigned</option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className={activeOnly ? "filter-toggle active" : "filter-toggle"}
+            onClick={() => setActiveOnly((current) => !current)}
+            aria-pressed={activeOnly}
+          >
+            In flight only{runningCount > 0 ? ` · ${runningCount}` : ""}
+          </button>
+          <span className="filter-count">
+            {tasks.length === allTasks.length
+              ? `${allTasks.length} tasks`
+              : `${tasks.length} of ${allTasks.length} tasks`}
+          </span>
+        </div>
+
         <StateNotice state={board} empty="No tasks yet" />
+        {allTasks.length > 0 && tasks.length === 0 && (
+          <div className="notice compact">No tasks match the current filter</div>
+        )}
         {tasks.length > 0 && (
           <div className="board-grid">
             {taskStatuses.map((status) => (
@@ -541,8 +645,12 @@ function TasksTab({
                 <h3>{status}</h3>
                 {tasks.filter((task) => task.status === status).map((task) => (
                   <article className="task-card" key={task.id}>
+                    <TaskExecutionBadge task={task} agents={agents} />
                     <strong>{task.title}</strong>
                     <p>{task.description || "-"}</p>
+                    {task.created_by_type === "agent" && (
+                      <span className="provenance">Created by agent {agentName(agents, task.created_by_id)}</span>
+                    )}
                     <label>
                       Status
                       <select value={task.status} onChange={(event) => onMoveTask(task.id, event.target.value as TaskStatus)}>
@@ -576,4 +684,60 @@ function TasksTab({
       </div>
     </div>
   );
+}
+
+// A task holds a lease only while an agent runtime is actively working it, so
+// an unexpired lease is the one reliable signal that work is happening now.
+function TaskExecutionBadge({ task, agents }: { task: Task; agents: Agent[] }) {
+  const state = leaseState(task);
+  if (state === "idle") {
+    return null;
+  }
+  const worker = task.worker_id ? agentName(agents, task.worker_id) : "";
+  const expiry = formatRelativeTime(task.lease_expires_at);
+  return (
+    <span className="exec-line">
+      {state === "running" ? (
+        <span className="exec-badge running">
+          <span className="exec-dot" />
+          Running
+        </span>
+      ) : (
+        <span className="exec-badge stalled" title={`Lease expired ${expiry}`}>
+          Stalled
+        </span>
+      )}
+      {worker && <small className="exec-worker">{worker}</small>}
+    </span>
+  );
+}
+
+function agentName(agents: Agent[], id?: string): string {
+  if (!id) {
+    return "";
+  }
+  return agents.find((agent) => agent.id === id)?.name || id;
+}
+
+function agentStateClass(status?: string): string {
+  if (status === "error" || status === "failed") {
+    return "error";
+  }
+  if (status === "busy") {
+    return "busy";
+  }
+  if (status === "paused") {
+    return "paused";
+  }
+  return "idle";
+}
+
+function deliveryClass(status: string): string {
+  if (status === "failed" || status === "dead_letter" || status === "expired") {
+    return "bad";
+  }
+  if (status === "pending" || status === "retrying") {
+    return "warn";
+  }
+  return "ok";
 }

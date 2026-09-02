@@ -62,6 +62,9 @@ export default function Home() {
   const [accessGrants, setAccessGrants] = useState<ApiState<AccessGrant[]>>({ data: [], loading: false, error: "" });
   const [audit, setAudit] = useState<ApiState<AuditEntry[]>>({ data: [], loading: false, error: "" });
   const [metering, setMetering] = useState<ApiState<MeteringSummary>>({ data: null, loading: false, error: "" });
+  const [squadMetering, setSquadMetering] = useState<ApiState<MeteringSummary>>({ data: null, loading: false, error: "" });
+  const [squadAudit, setSquadAudit] = useState<ApiState<AuditEntry[]>>({ data: [], loading: false, error: "" });
+  const [agentCosts, setAgentCosts] = useState<Record<string, MeteringSummary>>({});
   const [newSquadForm, setNewSquadForm] = useState({ name: "", mission: "" });
   const [squadMissionDraft, setSquadMissionDraft] = useState("");
   const [agentForm, setAgentForm] = useState({ name: "", role: "", default_model: "", idle_timeout_sec: "300" });
@@ -254,6 +257,56 @@ export default function Home() {
       cancelled = true;
     };
   }, [selectedSquadID, token, refreshTick]);
+
+  useEffect(() => {
+    if (!selectedSquadID) {
+      setSquadMetering({ data: null, loading: false, error: "" });
+      setSquadAudit({ data: [], loading: false, error: "" });
+      return;
+    }
+    let cancelled = false;
+    setSquadMetering({ data: null, loading: true, error: "" });
+    setSquadAudit({ data: null, loading: true, error: "" });
+    Promise.allSettled([
+      apiGet<MeteringSummary>(`/squads/${selectedSquadID}/metering`, token),
+      apiGet<AuditEntry[]>(`/squads/${selectedSquadID}/audit`, token),
+    ]).then(([meteringResult, auditResult]) => {
+      if (cancelled) {
+        return;
+      }
+      setSquadMetering(stateFromResult(meteringResult));
+      setSquadAudit(stateFromResult(auditResult, []));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSquadID, token, refreshTick]);
+
+  useEffect(() => {
+    const agentItems = agents.data || [];
+    if (agentItems.length === 0) {
+      setAgentCosts({});
+      return;
+    }
+    let cancelled = false;
+    Promise.allSettled(
+      agentItems.map((agent) => apiGet<MeteringSummary>(`/agents/${agent.id}/metering`, token)),
+    ).then((results) => {
+      if (cancelled) {
+        return;
+      }
+      const costs: Record<string, MeteringSummary> = {};
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled" && result.value) {
+          costs[agentItems[index].id] = result.value;
+        }
+      });
+      setAgentCosts(costs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [agents.data, token, refreshTick]);
 
   useEffect(() => {
     if (activeSection !== "admin") {
@@ -597,6 +650,9 @@ export default function Home() {
                 setGrantForm={setGrantForm}
                 onCreateGrant={submitAccessGrant}
                 onRevokeGrant={revokeAccessGrant}
+                squadMetering={squadMetering}
+                squadAudit={squadAudit}
+                agentCosts={agentCosts}
               />
             )}
 

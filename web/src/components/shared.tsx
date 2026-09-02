@@ -1,6 +1,6 @@
 "use client";
 
-import { AgentPermission, ApiState, LLMProvider, Message, MeteringSummary, RegistryResource, ResourceType, TaskStatus } from "../lib/api";
+import { AgentPermission, ApiState, LLMProvider, Message, MeteringSummary, RegistryResource, ResourceType, Task, TaskStatus } from "../lib/api";
 
 export const taskStatuses: TaskStatus[] = ["todo", "in-progress", "in-review", "done", "blocked"];
 
@@ -48,4 +48,57 @@ export function formatCost(summary: MeteringSummary | null) {
   const cost = summary.cost ?? 0;
   const currency = summary.currency || "USD";
   return `${currency} ${cost.toFixed(4)}`;
+}
+
+export type LeaseState = "running" | "stalled" | "idle";
+
+// A task holds a lease while an agent runtime is actively working it. An
+// expired lease means the worker stopped heartbeating without completing.
+export function leaseState(task: Task): LeaseState {
+  if (!task.execution_id || !task.lease_expires_at) {
+    return "idle";
+  }
+  const expiry = Date.parse(task.lease_expires_at);
+  if (Number.isNaN(expiry)) {
+    return "idle";
+  }
+  return expiry > Date.now() ? "running" : "stalled";
+}
+
+export function formatRelativeTime(value?: string): string {
+  if (!value) {
+    return "";
+  }
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "";
+  }
+  const deltaSec = Math.round((timestamp - Date.now()) / 1000);
+  const absSec = Math.abs(deltaSec);
+  const [amount, unit]: [number, Intl.RelativeTimeFormatUnit] =
+    absSec < 60 ? [deltaSec, "second"]
+    : absSec < 3600 ? [Math.round(deltaSec / 60), "minute"]
+    : absSec < 86400 ? [Math.round(deltaSec / 3600), "hour"]
+    : [Math.round(deltaSec / 86400), "day"];
+  return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, unit);
+}
+
+export function messageDeliveryNote(message: Message): string {
+  const parts: string[] = [];
+  if (typeof message.attempts === "number" && message.attempts > 0) {
+    const max = message.max_attempts ? `/${message.max_attempts}` : "";
+    parts.push(`attempt ${message.attempts}${max}`);
+  }
+  if (message.next_retry_at) {
+    // A retry time already in the past means the queue is behind, not that a
+    // retry happened — say it is due rather than reporting it as history.
+    const due = Date.parse(message.next_retry_at);
+    parts.push(
+      !Number.isNaN(due) && due <= Date.now() ? "retry due" : `retry ${formatRelativeTime(message.next_retry_at)}`,
+    );
+  }
+  if (message.expires_at) {
+    parts.push(`expires ${formatRelativeTime(message.expires_at)}`);
+  }
+  return parts.join(" · ");
 }
