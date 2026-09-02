@@ -441,6 +441,13 @@
 - command/test run: `npm run lint` and `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`; visual smoke via local dev server (desktop and mobile viewports).
 - result: Replaced the teal/dark-sidebar shell with a white/light-grey + orange theme. Added a top navbar with brand, open-task/mode/API-connectivity status pills, and a profile avatar dropdown (identity, role, token form). Main menu is now Squads, Registry (subsections per resource type: LLM Providers, Skills, Tools, APIs, Knowledge Bases, Project Workspaces), and Admin — Admin rendered only for `platform_admin` (dev mode auto-promotes, so visible in DEV). Removed the Squads/Agents count tiles and the Agents/Tasks top-level menus; agents, tasks, and access grants now live as tabs inside the selected squad's detail view, so agents are always created inside a squad. Split the monolithic page into presentational components under `web/src/components/`.
 
+## 2026-09-02 (Christian/Claude) - agent visibility
+
+- objective: Make agent work visible in the web UI without control-plane changes, using data the API already returns.
+- files changed: `web/src/app/globals.css`, `web/src/app/page.tsx`, `web/src/components/SquadCockpit.tsx`, `web/src/components/SquadsSection.tsx`, `web/src/components/shared.tsx`, `web/src/lib/api.ts`, `WORKLOG.md`.
+- command/test run: `npm run lint` and `NEXT_TELEMETRY_DISABLED=1 npm run build` in `web/`; scripted headless-Chrome verification against a mock control plane (filter persistence, delivery states, console/network errors, mobile overflow measurement).
+- result: Added a squad cockpit on the Overview tab (agent states, work in flight, squad spend, tasks done, plus a recent-activity feed) wired to the previously unused `GET /squads/{id}/metering` and `GET /squads/{id}/audit`. Task cards now show live execution state derived from the existing lease fields (running vs stalled, naming the worker) and mark agent-created tasks. The agents table gained a cost column from the unused `GET /agents/{id}/metering` and status pills that distinguish idle/busy/paused/error. Chat now surfaces message delivery state (attempt counts, retry due/scheduled, expiry, dead-letter reason). The board gained assignee and in-flight filters with per-squad localStorage persistence. No API or control-plane changes.
+
 ## 2026-09-02 (Christian/Claude) - PR review fixes
 
 - objective: Address Sherlock's two review findings on the web UI redesign PR.
