@@ -1395,6 +1395,32 @@ func (p *PostgresStore) createTaskExecutionTx(ctx context.Context, tx pgx.Tx, ta
 	return scanTaskExecution(row)
 }
 
+func (p *PostgresStore) ListBoardTaskExecutions(ctx context.Context, boardID string) ([]*domain.TaskExecution, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT e.id::text, e.task_id::text, e.agent_id::text, e.worker_id, e.fencing_token,
+		       e.status, e.lease_expires_at, coalesce(e.result_status, ''), e.result_summary,
+		       e.started_at, e.completed_at, e.updated_at
+		FROM task_executions e
+		JOIN tasks t ON t.id = e.task_id
+		WHERE t.board_id = $1 AND e.status = $2
+		ORDER BY e.started_at
+	`, boardID, domain.TaskExecutionActive)
+	if err != nil {
+		return nil, mapPgErr(err)
+	}
+	defer rows.Close()
+
+	executions := []*domain.TaskExecution{}
+	for rows.Next() {
+		exec, err := scanTaskExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		executions = append(executions, exec)
+	}
+	return executions, mapPgErr(rows.Err())
+}
+
 func (p *PostgresStore) HeartbeatTaskExecution(ctx context.Context, agentID string, executionID string, fencingToken string, leaseFor time.Duration) (*domain.TaskExecution, error) {
 	if leaseFor <= 0 {
 		leaseFor = 5 * time.Minute

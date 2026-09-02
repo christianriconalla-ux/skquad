@@ -90,6 +90,12 @@ type TaskStore interface {
 	ListTasks(ctx context.Context, boardID string, status domain.TaskStatus) ([]*domain.Task, error) // status "" = all
 	ListAgentTasks(ctx context.Context, agentID string) ([]*domain.Task, error)
 	ClaimNextTask(ctx context.Context, agentID string, workerID string, leaseFor time.Duration) (*domain.Task, error)
+	// ListBoardTaskExecutions returns execution attempts still marked active for
+	// every task on a board. Attempts whose lease has already lapsed are
+	// included: an expired lease is the only signal that a worker stopped
+	// heartbeating without completing, so callers need it to tell "running"
+	// apart from "stalled".
+	ListBoardTaskExecutions(ctx context.Context, boardID string) ([]*domain.TaskExecution, error)
 	HeartbeatTaskExecution(ctx context.Context, agentID string, executionID string, fencingToken string, leaseFor time.Duration) (*domain.TaskExecution, error)
 	CompleteTaskExecution(ctx context.Context, agentID string, taskID string, executionID string, fencingToken string, status domain.TaskStatus, summary string) (*domain.Task, error)
 }

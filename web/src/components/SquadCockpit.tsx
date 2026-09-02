@@ -46,8 +46,12 @@ export function SquadCockpit({
 
         <article className="metric">
           <span className="metric-label">Squad spend</span>
-          <strong className="metric-value">{metering.loading ? "…" : formatCost(metering.data)}</strong>
-          <span className="metric-sub">{formatTokens(metering.data)}</span>
+          <strong className="metric-value">{metering.loading ? "…" : metering.error ? "-" : formatCost(metering.data)}</strong>
+          {/* Metering and audit are owner/platform-admin endpoints; a squad member
+              with a read grant legitimately gets 403 here, which is not a fault. */}
+          <span className={metering.error ? "metric-sub muted" : "metric-sub"}>
+            {metering.error ? "owner and platform admins only" : formatTokens(metering.data)}
+          </span>
         </article>
 
         <article className="metric">
@@ -59,7 +63,11 @@ export function SquadCockpit({
 
       <section className="feed">
         <h3 className="panel-title">Recent activity</h3>
-        <StateNotice state={audit} empty="No recorded activity for this squad" />
+        {audit.error ? (
+          <div className="notice compact muted">Activity details are limited to the squad owner and platform admins.</div>
+        ) : (
+          <StateNotice state={audit} empty="No recorded activity for this squad" />
+        )}
         <div className="feed-list">
           {(audit.data || []).slice(0, 12).map((entry) => (
             <article className="feed-row" key={entry.id}>

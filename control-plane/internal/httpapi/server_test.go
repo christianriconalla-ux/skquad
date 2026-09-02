@@ -863,6 +863,68 @@ func TestAgentRuntimeTaskClaimAndStatusFlow(t *testing.T) {
 	require.Contains(t, auditActions(audit), "task.complete")
 }
 
+func TestBoardExposesActiveExecutionState(t *testing.T) {
+	t.Parallel()
+
+	crWriter := &fakeCRWriter{}
+	handler := NewWithCRWriter(testConfig(), storage.NewMemoryStore(), crWriter)
+
+	var squad domain.Squad
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads", map[string]any{
+		"name": "Board Execution Squad",
+	}, http.StatusCreated, &squad)
+
+	var agent domain.Agent
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/agents", map[string]any{
+		"name": "Board Execution Agent",
+	}, http.StatusCreated, &agent)
+
+	var identity domain.AgentIdentity
+	doJSON(t, handler, http.MethodPost, "/api/v1/agents/"+agent.ID+"/identity", nil, http.StatusCreated, &identity)
+	credential := crWriter.credentialTokens[identity.CredentialRef]
+	require.NotEmpty(t, credential)
+
+	var task domain.Task
+	doJSON(t, handler, http.MethodPost, "/api/v1/squads/"+squad.ID+"/board/tasks", map[string]any{
+		"title":             "Work in flight",
+		"assignee_agent_id": agent.ID,
+	}, http.StatusCreated, &task)
+
+	readBoard := func() domain.Task {
+		var board struct {
+			Board domain.Board  `json:"board"`
+			Tasks []domain.Task `json:"tasks"`
+		}
+		doJSON(t, handler, http.MethodGet, "/api/v1/squads/"+squad.ID+"/board", nil, http.StatusOK, &board)
+		require.Len(t, board.Tasks, 1)
+		return board.Tasks[0]
+	}
+
+	before := readBoard()
+	require.Empty(t, before.ExecutionID, "an unclaimed task must not look in flight")
+	require.True(t, before.LeaseExpiresAt.IsZero())
+
+	var claimed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/claim", nil, http.StatusOK, &claimed)
+	require.NotEmpty(t, claimed.ExecutionID)
+
+	inFlight := readBoard()
+	require.Equal(t, claimed.ExecutionID, inFlight.ExecutionID, "board must show the active execution")
+	require.True(t, inFlight.LeaseExpiresAt.After(time.Now()), "board must carry the live lease deadline")
+	require.Empty(t, inFlight.FencingToken, "fencing tokens must not leak to board readers")
+
+	var completed domain.Task
+	doAgentJSON(t, handler, agent.ID, credential, http.MethodPost, "/api/v1/agents/me/tasks/"+task.ID+"/complete", map[string]any{
+		"status":        string(domain.TaskDone),
+		"execution_id":  claimed.ExecutionID,
+		"fencing_token": claimed.FencingToken,
+	}, http.StatusOK, &completed)
+	require.Equal(t, domain.TaskDone, completed.Status)
+
+	after := readBoard()
+	require.Empty(t, after.ExecutionID, "a finished execution must stop showing as in flight")
+}
+
 func TestAgentRuntimeRejectsStaleTaskExecutionFence(t *testing.T) {
 	t.Parallel()
 

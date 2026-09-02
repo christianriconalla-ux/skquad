@@ -513,6 +513,15 @@ tr:last-child td {
   padding: 10px 12px;
 }
 
+/* Expected-absent data (for example an owner-only panel opened by a squad
+   member) should read as unavailable, not as something broken. */
+.notice.muted {
+  border-color: #d7dde5;
+  border-style: dashed;
+  background: #f8fafc;
+  color: var(--muted);
+}
+
 .workflow-grid {
   display: grid;
   grid-template-columns: minmax(260px, 340px) repeat(2, minmax(0, 1fr));
@@ -802,6 +811,10 @@ tr:last-child td {
 .metric-sub {
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.metric-sub.muted {
+  font-style: italic;
 }
 
 .metric-flag {

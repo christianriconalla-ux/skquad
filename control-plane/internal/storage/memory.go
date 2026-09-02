@@ -1075,6 +1075,23 @@ func (m *MemoryStore) CompleteTaskExecution(_ context.Context, agentID string, t
 	return taskWithExecution(task, exec), nil
 }
 
+func (m *MemoryStore) ListBoardTaskExecutions(_ context.Context, boardID string) ([]*domain.TaskExecution, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := []*domain.TaskExecution{}
+	for _, exec := range m.taskExecs {
+		if exec.Status != domain.TaskExecutionActive {
+			continue
+		}
+		task, ok := m.tasks[exec.TaskID]
+		if !ok || task.BoardID != boardID {
+			continue
+		}
+		out = append(out, cloneTaskExecution(exec))
+	}
+	return out, nil
+}
+
 func (m *MemoryStore) taskHasActiveExecutionLocked(taskID string, now time.Time) bool {
 	for _, exec := range m.taskExecs {
 		if exec.TaskID == taskID && exec.Status == domain.TaskExecutionActive && exec.LeaseExpiresAt.After(now) {

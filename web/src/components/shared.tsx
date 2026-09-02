@@ -59,7 +59,10 @@ export function leaseState(task: Task): LeaseState {
     return "idle";
   }
   const expiry = Date.parse(task.lease_expires_at);
-  if (Number.isNaN(expiry)) {
+  // Go serialises a zero time.Time as 0001-01-01T00:00:00Z rather than omitting
+  // it, and that string is truthy but parses to a large negative timestamp.
+  // Anything before the epoch means "no lease", not "lease expired long ago".
+  if (Number.isNaN(expiry) || expiry <= 0) {
     return "idle";
   }
   return expiry > Date.now() ? "running" : "stalled";

@@ -258,8 +258,10 @@ export default function Home() {
     };
   }, [selectedSquadID, token, refreshTick]);
 
+  // Cockpit data is only rendered on the squad Overview tab, so fetch it only
+  // while that tab is open instead of on every squad selection and refresh tick.
   useEffect(() => {
-    if (!selectedSquadID) {
+    if (!selectedSquadID || activeSection !== "squads" || squadTab !== "overview") {
       setSquadMetering({ data: null, loading: false, error: "" });
       setSquadAudit({ data: [], loading: false, error: "" });
       return;
@@ -280,9 +282,14 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSquadID, token, refreshTick]);
+  }, [selectedSquadID, activeSection, squadTab, token, refreshTick]);
 
+  // Cost is one request per agent, so it runs only while the Agents tab is
+  // open. A squad-level aggregate endpoint would remove the fan-out entirely.
   useEffect(() => {
+    if (activeSection !== "squads" || squadTab !== "agents") {
+      return;
+    }
     const agentItems = agents.data || [];
     if (agentItems.length === 0) {
       setAgentCosts({});
@@ -306,7 +313,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [agents.data, token, refreshTick]);
+  }, [agents.data, activeSection, squadTab, token, refreshTick]);
 
   useEffect(() => {
     if (activeSection !== "admin") {

@@ -1257,10 +1257,50 @@ func (s *Server) getBoard(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, err)
 		return
 	}
+	// Tasks carry no lease columns of their own; the live execution attempt is a
+	// separate row. Attach it here so one board request is enough for clients to
+	// show what agents are working on right now.
+	executions, err := s.store.ListBoardTaskExecutions(r.Context(), board.ID)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	attachExecutionState(tasks, executions)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"board": board,
 		"tasks": tasks,
 	})
+}
+
+// attachExecutionState stamps each task with its newest active execution
+// attempt. Tasks without an attempt keep zero values, which clients read as
+// "not in flight".
+func attachExecutionState(tasks []*domain.Task, executions []*domain.TaskExecution) {
+	newest := make(map[string]*domain.TaskExecution, len(executions))
+	for _, exec := range executions {
+		if exec == nil {
+			continue
+		}
+		current, ok := newest[exec.TaskID]
+		if !ok || exec.StartedAt.After(current.StartedAt) {
+			newest[exec.TaskID] = exec
+		}
+	}
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		exec, ok := newest[task.ID]
+		if !ok {
+			continue
+		}
+		task.ExecutionID = exec.ID
+		task.WorkerID = exec.WorkerID
+		task.LeaseExpiresAt = exec.LeaseExpiresAt
+		// FencingToken is deliberately not copied: it authorises runtime
+		// heartbeat/complete calls, so it belongs to the claiming worker and must
+		// not leak to everyone who can read the board.
+	}
 }
 
 func (s *Server) getSquadMetering(w http.ResponseWriter, r *http.Request) {

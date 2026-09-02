@@ -555,6 +555,21 @@ function TasksTab({
     setAssigneeFilter(window.localStorage.getItem(`${assigneeFilterKey}:${squadID}`) || "");
   }, [squadID]);
 
+  // A filter pointing at an agent that has since been removed would hide every
+  // card with no visible reason. Only second-guess it once a non-empty agent
+  // list has arrived, otherwise the first render (agents still loading) would
+  // wipe a perfectly valid filter.
+  useEffect(() => {
+    if (!assigneeFilter || assigneeFilter === "__unassigned" || agents.length === 0) {
+      return;
+    }
+    if (agents.some((agent) => agent.id === assigneeFilter)) {
+      return;
+    }
+    setAssigneeFilter("");
+    window.localStorage.removeItem(`${assigneeFilterKey}:${squadID}`);
+  }, [agents, assigneeFilter, squadID]);
+
   function changeAssigneeFilter(value: string) {
     setAssigneeFilter(value);
     if (value) {
@@ -693,7 +708,7 @@ function TaskExecutionBadge({ task, agents }: { task: Task; agents: Agent[] }) {
   if (state === "idle") {
     return null;
   }
-  const worker = task.worker_id ? agentName(agents, task.worker_id) : "";
+  const worker = workerLabel(agents, task.worker_id);
   const expiry = formatRelativeTime(task.lease_expires_at);
   return (
     <span className="exec-line">
@@ -707,9 +722,24 @@ function TaskExecutionBadge({ task, agents }: { task: Task; agents: Agent[] }) {
           Stalled
         </span>
       )}
-      {worker && <small className="exec-worker">{worker}</small>}
+      {worker && <small className="exec-worker" title={worker.detail}>{worker.name}</small>}
     </span>
   );
+}
+
+// A runtime names its worker "<agent id>:<uuid>", so the prefix resolves to an
+// agent while the suffix only tells two processes of the same agent apart.
+// Printing the raw id on the card would be unreadable noise.
+function workerLabel(agents: Agent[], workerID?: string): { name: string; detail: string } | null {
+  if (!workerID) {
+    return null;
+  }
+  const [agentID, instance] = workerID.split(":");
+  const name = agentName(agents, agentID);
+  return {
+    name: name || "worker",
+    detail: instance ? `worker ${instance}` : workerID,
+  };
 }
 
 function agentName(agents: Agent[], id?: string): string {
