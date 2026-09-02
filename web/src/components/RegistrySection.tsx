@@ -31,8 +31,8 @@ export function RegistrySection({
   resources: ApiState<RegistryResource[]>;
   providerForm: { name: string; kind: string; base_url: string; api_key_ref: string; default_model: string; models: string };
   setProviderForm: (form: { name: string; kind: string; base_url: string; api_key_ref: string; default_model: string; models: string }) => void;
-  resourceForm: { type: Exclude<ResourceType, "llm_provider">; name: string; description: string; endpoint: string; auth_ref: string; manifest: string };
-  setResourceForm: (form: { type: Exclude<ResourceType, "llm_provider">; name: string; description: string; endpoint: string; auth_ref: string; manifest: string }) => void;
+  resourceForm: { name: string; description: string; endpoint: string; auth_ref: string; manifest: string };
+  setResourceForm: (form: { name: string; description: string; endpoint: string; auth_ref: string; manifest: string }) => void;
   onCreateProvider: (event: FormEvent<HTMLFormElement>) => void;
   onCreateResource: (event: FormEvent<HTMLFormElement>) => void;
   onDeprecateProvider: (id: string) => void;
@@ -124,23 +124,23 @@ export function RegistrySection({
         <h3>Register {singular(label)}</h3>
         <label>
           Name
-          <input value={resourceForm.name} onChange={(event) => setResourceForm({ ...resourceForm, type: activeType, name: event.target.value })} required />
+          <input value={resourceForm.name} onChange={(event) => setResourceForm({ ...resourceForm,name: event.target.value })} required />
         </label>
         <label>
           Description
-          <textarea value={resourceForm.description} onChange={(event) => setResourceForm({ ...resourceForm, type: activeType, description: event.target.value })} rows={3} />
+          <textarea value={resourceForm.description} onChange={(event) => setResourceForm({ ...resourceForm,description: event.target.value })} rows={3} />
         </label>
         <label>
           Endpoint
-          <input value={resourceForm.endpoint} onChange={(event) => setResourceForm({ ...resourceForm, type: activeType, endpoint: event.target.value })} />
+          <input value={resourceForm.endpoint} onChange={(event) => setResourceForm({ ...resourceForm,endpoint: event.target.value })} />
         </label>
         <label>
           Auth ref
-          <input value={resourceForm.auth_ref} onChange={(event) => setResourceForm({ ...resourceForm, type: activeType, auth_ref: event.target.value })} />
+          <input value={resourceForm.auth_ref} onChange={(event) => setResourceForm({ ...resourceForm,auth_ref: event.target.value })} />
         </label>
         <label>
           Manifest JSON
-          <textarea value={resourceForm.manifest} onChange={(event) => setResourceForm({ ...resourceForm, type: activeType, manifest: event.target.value })} rows={3} />
+          <textarea value={resourceForm.manifest} onChange={(event) => setResourceForm({ ...resourceForm,manifest: event.target.value })} rows={3} />
         </label>
         <button type="submit">Register</button>
       </form>

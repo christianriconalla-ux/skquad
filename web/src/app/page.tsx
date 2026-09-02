@@ -39,6 +39,8 @@ const emptyState = {
   error: "",
 };
 
+const emptyResourceForm = { name: "", description: "", endpoint: "", auth_ref: "", manifest: "{}" };
+
 export default function Home() {
   const [token, setToken] = useState("");
   const [draftToken, setDraftToken] = useState("");
@@ -66,7 +68,7 @@ export default function Home() {
   const [taskForm, setTaskForm] = useState({ title: "", description: "", assignee_agent_id: "" });
   const [chatDraft, setChatDraft] = useState("");
   const [providerForm, setProviderForm] = useState({ name: "", kind: "openai", base_url: "", api_key_ref: "", default_model: "", models: "" });
-  const [resourceForm, setResourceForm] = useState({ type: "skill" as Exclude<ResourceType, "llm_provider">, name: "", description: "", endpoint: "", auth_ref: "", manifest: "{}" });
+  const [resourceForm, setResourceForm] = useState(emptyResourceForm);
   const [permissionForm, setPermissionForm] = useState({ resource_type: "llm_provider" as ResourceType, resource_id: "" });
   const [grantForm, setGrantForm] = useState({ grantee_type: "user" as "user" | "agent", grantee_id: "", permissions: "talk" });
 
@@ -75,6 +77,12 @@ export default function Home() {
     setToken(stored);
     setDraftToken(stored);
   }, []);
+
+  // Each registry subsection registers a different resource type, so values
+  // typed for one type should not carry into another type's form.
+  useEffect(() => {
+    setResourceForm(emptyResourceForm);
+  }, [registrySub]);
 
   useEffect(() => {
     let cancelled = false;
@@ -419,7 +427,12 @@ export default function Home() {
 
   async function submitResource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const route = registryTypes.find((item) => item.type === resourceForm.type)?.path || "skills";
+    if (registrySub === "llm-providers") {
+      return;
+    }
+    // The visible subsection is the only source of truth for the resource type,
+    // so the posted route always matches the form the user is looking at.
+    const route = registrySub;
     await runAction("Resource registered", async () => {
       await apiPost<RegistryResource>(`/registry/${route}`, token, {
         name: resourceForm.name,
@@ -428,7 +441,7 @@ export default function Home() {
         auth_ref: resourceForm.auth_ref,
         manifest: parseJSONObject(resourceForm.manifest),
       });
-      setResourceForm({ type: resourceForm.type, name: "", description: "", endpoint: "", auth_ref: "", manifest: "{}" });
+      setResourceForm(emptyResourceForm);
     });
   }
 

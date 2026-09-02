@@ -698,9 +698,10 @@ tr:last-child td {
   }
 
   .sidebar {
-    position: sticky;
-    top: 56px;
-    z-index: 10;
+    /* The top nav wraps at this width, so its height is no longer the 56px a
+       sticky offset would need. Scroll the nav away with the page instead of
+       pinning the sidebar under a header of unpredictable height. */
+    position: static;
     flex-direction: row;
     flex-wrap: wrap;
     gap: 6px;
