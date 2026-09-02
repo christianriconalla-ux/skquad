@@ -54,6 +54,10 @@ export type Task = {
   position?: number;
   created_at?: string;
   updated_at?: string;
+  execution_id?: string;
+  worker_id?: string;
+  fencing_token?: string;
+  lease_expires_at?: string;
 };
 
 export type BoardPayload = {
@@ -78,6 +82,11 @@ export type Message = {
   };
   status: string;
   correlation_id?: string;
+  attempts?: number;
+  max_attempts?: number;
+  next_retry_at?: string;
+  expires_at?: string;
+  terminal_reason?: string;
   created_at?: string;
   delivered_at?: string;
 };

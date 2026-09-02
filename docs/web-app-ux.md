@@ -48,27 +48,34 @@
 ## 3. Layout & Navigation
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  skquad   [Squads ▾]   [Registry]   [Metering]   [⚙] [👤] │
-├──────────────────────────────────────────────────────────┤
-│                                                          │
-│   Squad: <name>          [Mission] [Operating Model]     │
-│   ┌──────────────────────────────────────────────────┐   │
-│   │  TODO      │  IN-PROGRESS  │  IN-REVIEW  │  DONE  │   │
-│   │  ┌───────┐ │  ┌───────┐    │  ┌───────┐   │       │   │
-│   │  │ task  │ │  │ task  │    │  │ task  │   │       │   │
-│   │  └───────┘ │  └───────┘    │  └───────┘   │       │   │
-│   └──────────────────────────────────────────────────┘   │
-│                                                          │
-│   Agents: [🤖 coder] [🤖 reviewer]   [+ Add agent]       │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ [sq] skquad   [Open tasks · N] [Mode · Dev] [API ●]     [👤] │
+├──────────┬───────────────────────────────────────────────────┤
+│ Squads   │  Squad: <name>                                    │
+│ Registry │  [Overview] [Agents] [Tasks] [Access Grants]      │
+│  · LLM   │  ┌──────────────────────────────────────────────┐ │
+│  · Skills│  │ TODO │ IN-PROGRESS │ IN-REVIEW │ DONE │ BLOCK │ │
+│  · Tools │  │ ┌───┐│  ┌───┐      │           │      │       │ │
+│  · APIs  │  │ └───┘│  └───┘      │           │      │       │ │
+│  · KBs   │  └──────────────────────────────────────────────┘ │
+│ Admin*   │                                                   │
+└──────────┴───────────────────────────────────────────────────┘
 ```
 
-- **Top nav:** Squads, Registry (admin), Metering, Settings, User menu.
-- **Squad view:** the board (centre), squad details (mission, operating model),
-  and the agent list.
-- **Role-aware:** platform admins see Registry + platform-wide Metering/Audit;
-  users see their squads.
+- **Top navbar:** brand + title on the left; status pills (open tasks in the
+  selected squad, auth mode, API connectivity) and the user profile avatar on
+  the right. The avatar opens a dropdown with name, email, role, and the API
+  token form.
+- **Sidebar (main menu):** Squads, Registry (with one subsection per resource
+  type), and Admin. Admin is shown only to `platform_admin` users; dev mode
+  auto-promotes the dev principal to `platform_admin`, so it is visible in DEV
+  deployments.
+- **Squad-centric IA:** Agents and Tasks are not top-level menu items. They are
+  tabs inside the selected squad's detail view (Overview / Agents / Tasks /
+  Access Grants), so agents are always created inside a squad and there are no
+  orphaned agents.
+- **Theme:** white / light-grey surfaces with an orange accent, an
+  enterprise-oriented light theme.
 
 ---
 
@@ -121,8 +128,8 @@ remain follow-up work.
 - Cost shown only where the provider has pricing configured.
 
 ### 4.6 Registry (platform admin)
-- **Tabs** by resource type: LLM Providers, Skills, Tools, APIs, Knowledge
-  Bases, Project Workspaces.
+- **Subsections** by resource type: LLM Providers, Skills, Tools, APIs,
+  Knowledge Bases, Project Workspaces (sidebar sub-navigation).
 - **Register** a resource (definition + credential ref).
 - **Deprecate** a resource.
 - For LLM providers: models + per-token pricing.

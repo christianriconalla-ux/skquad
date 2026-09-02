@@ -15,7 +15,7 @@
 
 skquad gives teams a low-barrier way to build, run, and govern **squads of AI
 agents** on Kubernetes. It deliberately avoids the complexity of existing
-agentic platforms (e.g. Paperclip.ai) and instead optimises for:
+agentic platforms and instead optimises for:
 
 - **Time-to-first-agent in minutes** — a new user can go from login to a running
   squad with a single agent and a working LLM provider in a few clicks.
@@ -27,9 +27,9 @@ agentic platforms (e.g. Paperclip.ai) and instead optimises for:
 - **Extensibility** — the core stays small; capabilities are added through
   **plugins** (skills, tools, LLM providers, resource connectors).
 
-> **Design constraint:** do **not** copy Paperclip.ai's complexity. Keep the
-> initial surface small and easy to start; design for extension, not for
-> feature-maximalism.
+> **Design constraint:** do **not** copy the complexity of existing agentic
+> platforms. Keep the initial surface small and easy to start; design for
+> extension, not for feature-maximalism.
 
 ---
 
