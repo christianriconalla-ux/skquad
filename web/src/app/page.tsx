@@ -474,7 +474,9 @@ export default function Home() {
     if (!selectedSquad) {
       return;
     }
-    const llm = normalizedLLM(squadLLMDraft, providers.data || []) || squadLLM(selectedSquad);
+    // The draft mirrors the squad's LLM when selected, so an cleared picker is
+    // an explicit unset and must not fall back to the stored value.
+    const llm = normalizedLLM(squadLLMDraft, providers.data || []);
     await runAction("Squad updated", async () => {
       await apiPatch<Squad>(`/squads/${selectedSquad.id}`, token, {
         name: selectedSquad.name,
@@ -538,17 +540,24 @@ export default function Home() {
       return;
     }
     const model = pickModel(status.models, agent.default_model, status.llm.model);
+    // PUT replaces every grant, so build on the server's current list
+    // rather than possibly stale client state.
+    let current: AgentPermission[];
+    try {
+      current = await apiGet<AgentPermission[]>(`/agents/${agentID}/permissions`, token);
+    } catch (error) {
+      setActionMessage(errorState(error).error || "Request failed");
+      return;
+    }
     // A new grant reaches the gateway only when the agent's key is
-    // re-provisioned, which happens on identity rotation.
-    const hadGrant = agentID === selectedAgentID
-      && (agentPermissions.data || []).some((item) => item.resource_type === "llm_provider" && item.resource_id === status.llm.provider_id);
+    // re-provisioned, which happens on identity rotation. Judge this from
+    // the freshly fetched grants, not the loaded permissions of whichever
+    // agent happens to be selected.
+    const hadGrant = current.some((item) => item.resource_type === "llm_provider" && item.resource_id === status.llm.provider_id);
     const success = agent.identity_id && !hadGrant
       ? "Squad LLM applied. Rotate this agent's identity so the LLM gateway picks up the change"
       : "Squad LLM applied";
     await runAction(success, async () => {
-      // PUT replaces every grant, so build on the server's current list
-      // rather than possibly stale client state.
-      const current = await apiGet<AgentPermission[]>(`/agents/${agentID}/permissions`, token);
       await apiPatch<Agent>(`/agents/${agentID}`, token, { default_provider_id: status.llm.provider_id, default_model: model });
       await apiPut<AgentPermission[]>(`/agents/${agentID}/permissions`, token, permissionsWithLLM(current, status.llm.provider_id));
     });

@@ -939,7 +939,9 @@ function LLMPicker({
             onChange({ provider_id: event.target.value, model: pickModel(providerModels(next), value.model) });
           }}
         >
-          {!value.provider_id && <option value="">Choose a provider</option>}
+          {(!value.provider_id || !required) && (
+            <option value="">{value.provider_id ? "No LLM provider" : "Choose a provider"}</option>
+          )}
           {options.map((provider) => (
             <option key={provider.id} value={provider.id}>
               {`${provider.name}${provider.status === "active" ? "" : " (deprecated)"}`}
