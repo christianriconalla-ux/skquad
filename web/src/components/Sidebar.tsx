@@ -1,6 +1,6 @@
 "use client";
 
-export type Section = "inbox" | "squads" | "registry" | "admin";
+export type Section = "inbox" | "squads" | "registry" | "providers" | "admin";
 export type RegistrySubsection = "skills" | "tools" | "apis" | "knowledge-bases" | "project-workspaces";
 
 export const registrySubsections: Array<{ id: RegistrySubsection; label: string }> = [
@@ -62,6 +62,15 @@ export function Sidebar({
             </button>
           ))}
         </div>
+      )}
+      {showAdmin && (
+        <button
+          type="button"
+          className={activeSection === "providers" ? "nav-item active" : "nav-item"}
+          onClick={() => onSelectSection("providers")}
+        >
+          Providers
+        </button>
       )}
       {showAdmin && (
         <button

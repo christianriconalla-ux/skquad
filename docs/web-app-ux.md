@@ -60,6 +60,7 @@
 │  · APIs  │  │ └───┘│  └───┘      │           │      │       │ │
 │  · KBs   │  └──────────────────────────────────────────────┘ │
 │ Admin*   │                                                   │
+│ Providers*│                                                  │
 └──────────┴───────────────────────────────────────────────────┘
 ```
 
@@ -68,10 +69,11 @@
   the right. The avatar opens a dropdown with name, email, role, and the API
   token form.
 - **Sidebar (main menu):** Inbox, Squads, Resources (with one subsection per
-  resource type: Skills, Tools, APIs, Knowledge Bases, Project Workspaces), and
-  Admin. Admin is shown only to `platform_admin` users; dev mode auto-promotes
-  the dev principal to `platform_admin`, so it is visible in DEV deployments.
-  The API routes behind Resources remain `/registry/*`.
+  resource type: Skills, Tools, APIs, Knowledge Bases, Project Workspaces),
+  Providers, and Admin. Providers and Admin are shown only to `platform_admin`
+  users; dev mode auto-promotes the dev principal to `platform_admin`, so they
+  are visible in DEV deployments. The API routes behind Resources remain
+  `/registry/*`.
 - **Squad-centric IA:** Agents and Tasks are not top-level menu items. They are
   tabs inside the selected squad's detail view (Overview / Agents / Tasks /
   Access Grants), so agents are always created inside a squad and there are no
@@ -171,15 +173,20 @@ resources to the selected agent.
 Current implementation: the admin screen loads platform audit and metering
 summary endpoints when the current user has access.
 
-### 4.8 Admin / Settings (platform admin)
+### 4.8 Providers (platform admin)
 - **LLM providers** — register and deprecate the providers squads choose from:
-  endpoint, models, and per-token pricing.
+  endpoint, models, and per-token pricing. Providers are not grantable
+  resources: a squad picks one at creation and its agents inherit it, so
+  provider management lives in its own main-menu section rather than under
+  Resources or Admin.
+
+Current implementation: platform admins register and deprecate LLM providers
+here (`ProvidersSection`).
+
+### 4.9 Admin / Settings (platform admin)
 - Platform config (OIDC, defaults, idle timeout, observability toggle).
 - User management (roles, activate/deactivate).
 - Platform health.
-
-Current implementation: platform admins register and deprecate LLM providers
-here.
 
 ---
 

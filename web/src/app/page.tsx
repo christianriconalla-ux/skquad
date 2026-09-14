@@ -32,6 +32,7 @@ import { RegistrySubsection, Section, Sidebar } from "../components/Sidebar";
 import { SquadTab, SquadsSection } from "../components/SquadsSection";
 import { RegistrySection } from "../components/RegistrySection";
 import { AdminSection } from "../components/AdminSection";
+import { ProvidersSection } from "../components/ProvidersSection";
 import { InboxSection } from "../components/InboxSection";
 import {
   SquadLLM,
@@ -250,9 +251,9 @@ export default function Home() {
   }, [token, refreshTick]);
 
   // Providers feed the squad LLM picker and agent model list on Squads, and
-  // provider management on Admin. Resources no longer lists them.
+  // the Providers section. Resources no longer lists them.
   useEffect(() => {
-    if (activeSection !== "squads" && activeSection !== "admin") {
+    if (activeSection !== "squads" && activeSection !== "providers") {
       return;
     }
     let cancelled = false;
@@ -435,7 +436,7 @@ export default function Home() {
     : null;
 
   useEffect(() => {
-    if (activeSection === "admin" && user.data !== null && !isAdmin) {
+    if ((activeSection === "admin" || activeSection === "providers") && user.data !== null && !isAdmin) {
       setActiveSection("squads");
     }
   }, [activeSection, isAdmin, user.data]);
@@ -869,6 +870,16 @@ export default function Home() {
               />
             )}
 
+            {activeSection === "providers" && isAdmin && (
+              <ProvidersSection
+                providers={providers}
+                providerForm={providerForm}
+                setProviderForm={setProviderForm}
+                onCreateProvider={submitProvider}
+                onDeprecateProvider={deprecateProvider}
+              />
+            )}
+
             {activeSection === "admin" && isAdmin && (
               <AdminSection
                 user={user}
@@ -876,11 +887,6 @@ export default function Home() {
                 selectedAgent={selectedAgent}
                 metering={metering}
                 audit={audit}
-                providers={providers}
-                providerForm={providerForm}
-                setProviderForm={setProviderForm}
-                onCreateProvider={submitProvider}
-                onDeprecateProvider={deprecateProvider}
               />
             )}
           </section>
