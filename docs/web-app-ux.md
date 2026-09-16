@@ -86,7 +86,9 @@
   intact. Escape, Cancel and the close button dismiss it, a click on the
   backdrop does not, and drafts survive being dismissed. Below tablet width the
   dialog becomes a bottom sheet. Editing in place (squad settings) and the
-  agent chat composer stay inline.
+  agent chat composer stay inline. Deleting a squad, agent or task asks for
+  confirmation in the same kind of dialog, with a red confirm button, rather
+  than the browser's pop-up.
 - **Theme:** white / light-grey surfaces with an orange accent, an
   enterprise-oriented light theme.
 
@@ -122,8 +124,12 @@ Current implementation: users can create agents (choosing a model from the
 squad's LLM provider), create/rotate their identities, select an agent, view
 queued chat history, enqueue consult messages, and manage the selected agent's
 resource permissions. An agent that is not on the squad's LLM — one created
-before squads had an LLM, or after the squad's LLM changed — shows an **Apply
-squad LLM** action. Per-agent metering panels remain follow-up work.
+before squads had an LLM, or after the squad's LLM changed, or one left with a
+grant for another provider — shows an **Apply squad LLM** action. Apply grants
+the squad's provider first, then switches the agent's provider and model, and
+removes other provider grants last, so an interrupted Apply never leaves the
+agent pointing at a provider it has no grant for; running it again finishes
+the job. Per-agent metering panels remain follow-up work.
 
 ### 4.3 Chat (secondary)
 - A 1:1 conversation with an agent (ad-hoc questions / steering).
@@ -133,7 +139,8 @@ squad LLM** action. Per-agent metering panels remain follow-up work.
 ### 4.4 Squad Settings
 - **Mission** — what the squad is for.
 - **LLM** — the provider and default model the squad's agents use. Chosen at
-  creation and changeable later from the squad's Overview tab. A change applies
+  creation and changeable later from the squad's Overview tab, but not
+  removable once set, because agents need one to run. A change applies
   to agents added afterwards; existing agents move over with **Apply squad
   LLM**, and an agent that already has an identity needs it rotated before the
   LLM gateway serves the new provider.
