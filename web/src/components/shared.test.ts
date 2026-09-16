@@ -14,6 +14,7 @@ import {
   resolveSquadLLM,
   resourceLabel,
   squadLLM,
+  squadLLMGrantPlan,
   withSquadLLM,
 } from "../components/shared";
 import type { SquadLLMStatus } from "../components/shared";
@@ -350,6 +351,11 @@ describe("agentUsesSquadLLM", () => {
   it("is false whenever the squad LLM is not ready", () => {
     expect(agentUsesSquadLLM({ default_provider_id: "p-1", default_model: "m-1" }, grant, { state: "unset" })).toBe(false);
   });
+
+  it("is false while a grant for another provider is left over", () => {
+    const leftover = [...grant, { resource_type: "llm_provider", resource_id: "old" }] as AgentPermission[];
+    expect(agentUsesSquadLLM({ default_provider_id: "p-1", default_model: "m-1" }, leftover, ready)).toBe(false);
+  });
 });
 
 describe("permissionsWithLLM", () => {
@@ -368,6 +374,48 @@ describe("permissionsWithLLM", () => {
 
   it("grants the provider to an agent with no permissions", () => {
     expect(permissionsWithLLM([], "p-1")).toEqual([{ resource_type: "llm_provider", resource_id: "p-1" }]);
+  });
+});
+
+describe("squadLLMGrantPlan", () => {
+  const tool = { resource_type: "tool", resource_id: "t-1" };
+  const llm = (id: string) => ({ resource_type: "llm_provider", resource_id: id });
+
+  it("adds the new provider before removing the old one", () => {
+    expect(squadLLMGrantPlan([tool, llm("old")] as AgentPermission[], "p-1")).toEqual({
+      grant: [tool, llm("old"), llm("p-1")],
+      cleanup: [tool, llm("p-1")],
+      grantsChanged: true,
+    });
+  });
+
+  it("only cleans up when the new provider is already granted", () => {
+    expect(squadLLMGrantPlan([llm("p-1"), llm("old")] as AgentPermission[], "p-1")).toEqual({
+      grant: null,
+      cleanup: [llm("p-1")],
+      grantsChanged: true,
+    });
+  });
+
+  it("only grants when no other provider is granted", () => {
+    expect(squadLLMGrantPlan([tool] as AgentPermission[], "p-1")).toEqual({
+      grant: [tool, llm("p-1")],
+      cleanup: null,
+      grantsChanged: true,
+    });
+  });
+
+  it("changes no grants when the agent has exactly the squad provider", () => {
+    expect(squadLLMGrantPlan([tool, llm("p-1")] as AgentPermission[], "p-1")).toEqual({
+      grant: null,
+      cleanup: null,
+      grantsChanged: false,
+    });
+  });
+
+  it("drops fields other than the resource reference", () => {
+    const stored = [{ id: "perm-1", agent_id: "a-1", ...tool }] as AgentPermission[];
+    expect(squadLLMGrantPlan(stored, "p-1").grant).toEqual([tool, llm("p-1")]);
   });
 });
 

@@ -1150,6 +1150,17 @@ tr:last-child td {
   background: var(--accent-strong);
 }
 
+.primary.danger {
+  border-color: var(--bad);
+  background: var(--bad);
+  color: #ffffff;
+}
+
+.primary.danger:hover {
+  border-color: #7f1f1f;
+  background: #7f1f1f;
+}
+
 .primary:disabled,
 .primary:disabled:hover,
 .secondary:disabled,
@@ -1284,6 +1295,12 @@ html:has(.modal[open]) {
 
 .modal-body .notice {
   margin-top: 0;
+}
+
+.modal-message {
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .modal-foot {

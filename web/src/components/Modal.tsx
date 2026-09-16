@@ -14,6 +14,7 @@ export function Modal({
   pending = false,
   error = "",
   submitDisabled = false,
+  danger = false,
   triggerRef,
   children,
 }: {
@@ -25,6 +26,8 @@ export function Modal({
   pending?: boolean;
   error?: string;
   submitDisabled?: boolean;
+  // Destructive confirmations get a red submit button.
+  danger?: boolean;
   triggerRef?: { current: HTMLElement | null };
   children: ReactNode;
 }) {
@@ -111,7 +114,7 @@ export function Modal({
           <button type="button" className="secondary" onClick={onClose} disabled={pending}>
             Cancel
           </button>
-          <button type="submit" className="primary" disabled={pending || submitDisabled}>
+          <button type="submit" className={danger ? "primary danger" : "primary"} disabled={pending || submitDisabled}>
             {pending ? "Saving…" : submitLabel}
           </button>
         </footer>
