@@ -32,6 +32,7 @@ import { RegistrySubsection, Section, Sidebar } from "../components/Sidebar";
 import { SquadTab, SquadsSection } from "../components/SquadsSection";
 import { RegistrySection } from "../components/RegistrySection";
 import { AdminSection } from "../components/AdminSection";
+import { ProvidersSection } from "../components/ProvidersSection";
 import { InboxSection } from "../components/InboxSection";
 import { Modal, useModalForm } from "../components/Modal";
 import {
@@ -252,9 +253,9 @@ export default function Home() {
   }, [token, refreshTick]);
 
   // Providers feed the squad LLM picker and agent model list on Squads, and
-  // provider management on Admin. Resources no longer lists them.
+  // the Providers section. Resources no longer lists them.
   useEffect(() => {
-    if (activeSection !== "squads" && activeSection !== "admin") {
+    if (activeSection !== "squads" && activeSection !== "providers") {
       return;
     }
     let cancelled = false;
@@ -437,7 +438,7 @@ export default function Home() {
     : null;
 
   useEffect(() => {
-    if (activeSection === "admin" && user.data !== null && !isAdmin) {
+    if ((activeSection === "admin" || activeSection === "providers") && user.data !== null && !isAdmin) {
       setActiveSection("squads");
     }
   }, [activeSection, isAdmin, user.data]);
@@ -476,10 +477,9 @@ export default function Home() {
     if (!selectedSquad) {
       return;
     }
-    // The picker has no empty choice once a squad has an LLM, and the Overview
-    // says it can be changed but not removed, so an empty draft is never a
-    // request to remove it: keep the stored LLM rather than deleting it.
-    const llm = normalizedLLM(squadLLMDraft, providers.data || []) || squadLLM(selectedSquad);
+    // The draft mirrors the squad's LLM when selected, so an cleared picker is
+    // an explicit unset and must not fall back to the stored value.
+    const llm = normalizedLLM(squadLLMDraft, providers.data || []);
     await runAction("Squad updated", async () => {
       await apiPatch<Squad>(`/squads/${selectedSquad.id}`, token, {
         name: selectedSquad.name,
@@ -562,7 +562,9 @@ export default function Home() {
           await apiPut<AgentPermission[]>(`/agents/${agentID}/permissions`, token, plan.cleanup);
         }
         // A grant change reaches the gateway only when the agent's key is
-        // re-provisioned, which happens on identity rotation.
+        // re-provisioned, which happens on identity rotation. Judge this from
+        // the freshly fetched grants, not the loaded permissions of whichever
+        // agent happens to be selected.
         rotate = Boolean(agent.identity_id) && plan.grantsChanged;
       },
     );
@@ -905,6 +907,16 @@ export default function Home() {
               />
             )}
 
+            {activeSection === "providers" && isAdmin && (
+              <ProvidersSection
+                providers={providers}
+                providerForm={providerForm}
+                setProviderForm={setProviderForm}
+                onCreateProvider={submitProvider}
+                onDeprecateProvider={deprecateProvider}
+              />
+            )}
+
             {activeSection === "admin" && isAdmin && (
               <AdminSection
                 user={user}
@@ -912,11 +924,6 @@ export default function Home() {
                 selectedAgent={selectedAgent}
                 metering={metering}
                 audit={audit}
-                providers={providers}
-                providerForm={providerForm}
-                setProviderForm={setProviderForm}
-                onCreateProvider={submitProvider}
-                onDeprecateProvider={deprecateProvider}
               />
             )}
           </section>

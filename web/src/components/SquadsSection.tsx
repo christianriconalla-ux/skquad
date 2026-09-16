@@ -274,7 +274,6 @@ export function SquadsSection({
                 />
                 <small className="field-note">
                   Agents added from now on use this LLM. Existing agents keep theirs until you choose Apply squad LLM on the Agents tab.
-                  Once set, the LLM can be changed but not removed, because agents need one to run.
                 </small>
                 <button type="submit">Save settings</button>
               </form>
@@ -940,7 +939,9 @@ function LLMPicker({
             onChange({ provider_id: event.target.value, model: pickModel(providerModels(next), value.model) });
           }}
         >
-          {!value.provider_id && <option value="">Choose a provider</option>}
+          {(!value.provider_id || !required) && (
+            <option value="">{value.provider_id ? "No LLM provider" : "Choose a provider"}</option>
+          )}
           {/* A stored provider that is no longer registered stays listed, so the
               picker shows what will be saved instead of the first option. */}
           {value.provider_id && !providers.some((provider) => provider.id === value.provider_id) && (
