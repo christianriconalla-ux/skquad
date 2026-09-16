@@ -942,6 +942,11 @@ function LLMPicker({
           {(!value.provider_id || !required) && (
             <option value="">{value.provider_id ? "No LLM provider" : "Choose a provider"}</option>
           )}
+          {/* A stored provider that is no longer registered stays listed, so the
+              picker shows what will be saved instead of the first option. */}
+          {value.provider_id && !providers.some((provider) => provider.id === value.provider_id) && (
+            <option value={value.provider_id}>{`${value.provider_id} (not registered)`}</option>
+          )}
           {options.map((provider) => (
             <option key={provider.id} value={provider.id}>
               {`${provider.name}${provider.status === "active" ? "" : " (deprecated)"}`}

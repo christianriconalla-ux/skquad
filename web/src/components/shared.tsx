@@ -194,7 +194,8 @@ export function pickModel(models: string[], ...preferred: Array<string | undefin
 
 // An agent is on the squad's LLM only when all three pieces the runtime and
 // gateway need agree: its default provider, a gateway grant for that provider,
-// and a model the provider actually serves.
+// and a model the provider actually serves. A leftover grant for another
+// provider also counts as off it, so Apply is offered to remove it.
 export function agentUsesSquadLLM(
   agent: Pick<Agent, "default_provider_id" | "default_model">,
   permissions: Array<Pick<AgentPermission, "resource_type" | "resource_id">>,
@@ -203,9 +204,11 @@ export function agentUsesSquadLLM(
   if (status.state !== "ready") {
     return false;
   }
+  const llmGrants = permissions.filter((item) => item.resource_type === "llm_provider");
   return agent.default_provider_id === status.llm.provider_id
     && status.models.includes(agent.default_model || "")
-    && permissions.some((item) => item.resource_type === "llm_provider" && item.resource_id === status.llm.provider_id);
+    && llmGrants.some((item) => item.resource_id === status.llm.provider_id)
+    && llmGrants.every((item) => item.resource_id === status.llm.provider_id);
 }
 
 // LLM access is squad-managed, so applying it replaces any existing provider
@@ -220,6 +223,30 @@ export function permissionsWithLLM(
       .map((item) => ({ resource_type: item.resource_type, resource_id: item.resource_id })),
     { resource_type: "llm_provider", resource_id: providerID },
   ];
+}
+
+// Moving an agent onto the squad's provider means granting that provider,
+// pointing the agent's defaults at it, and removing any other provider grant.
+// Granting first and removing last means a failure at any step leaves the
+// agent with a grant for whichever provider it points at, so Apply can simply
+// be run again. A step with nothing to do is null.
+export function squadLLMGrantPlan(
+  permissions: Array<Pick<AgentPermission, "resource_type" | "resource_id">>,
+  providerID: string,
+): {
+  grant: Array<{ resource_type: ResourceType; resource_id: string }> | null;
+  cleanup: Array<{ resource_type: ResourceType; resource_id: string }> | null;
+  grantsChanged: boolean;
+} {
+  const current = permissions.map((item) => ({ resource_type: item.resource_type, resource_id: item.resource_id }));
+  const llmGrants = current.filter((item) => item.resource_type === "llm_provider");
+  const hasGrant = llmGrants.some((item) => item.resource_id === providerID);
+  const hasOther = llmGrants.some((item) => item.resource_id !== providerID);
+  return {
+    grant: hasGrant ? null : [...current, { resource_type: "llm_provider", resource_id: providerID }],
+    cleanup: hasOther ? permissionsWithLLM(current, providerID) : null,
+    grantsChanged: !hasGrant || hasOther,
+  };
 }
 
 export function countLabel(count: number, noun: string): string {

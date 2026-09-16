@@ -34,6 +34,7 @@ import { RegistrySection } from "../components/RegistrySection";
 import { AdminSection } from "../components/AdminSection";
 import { ProvidersSection } from "../components/ProvidersSection";
 import { InboxSection } from "../components/InboxSection";
+import { Modal, useModalForm } from "../components/Modal";
 import {
   SquadLLM,
   permissionsWithLLM,
@@ -42,6 +43,7 @@ import {
   registryTypes,
   resolveSquadLLM,
   squadLLM,
+  squadLLMGrantPlan,
   withSquadLLM,
 } from "../components/shared";
 
@@ -541,27 +543,31 @@ export default function Home() {
       return;
     }
     const model = pickModel(status.models, agent.default_model, status.llm.model);
-    // PUT replaces every grant, so build on the server's current list
-    // rather than possibly stale client state.
-    let current: AgentPermission[];
-    try {
-      current = await apiGet<AgentPermission[]>(`/agents/${agentID}/permissions`, token);
-    } catch (error) {
-      setActionMessage(errorState(error).error || "Request failed");
-      return;
-    }
-    // A new grant reaches the gateway only when the agent's key is
-    // re-provisioned, which happens on identity rotation. Judge this from
-    // the freshly fetched grants, not the loaded permissions of whichever
-    // agent happens to be selected.
-    const hadGrant = current.some((item) => item.resource_type === "llm_provider" && item.resource_id === status.llm.provider_id);
-    const success = agent.identity_id && !hadGrant
-      ? "Squad LLM applied. Rotate this agent's identity so the LLM gateway picks up the change"
-      : "Squad LLM applied";
-    await runAction(success, async () => {
-      await apiPatch<Agent>(`/agents/${agentID}`, token, { default_provider_id: status.llm.provider_id, default_model: model });
-      await apiPut<AgentPermission[]>(`/agents/${agentID}/permissions`, token, permissionsWithLLM(current, status.llm.provider_id));
-    });
+    let rotate = false;
+    await runAction(
+      () => (rotate ? "Squad LLM applied. Rotate this agent's identity so the LLM gateway picks up the change" : "Squad LLM applied"),
+      async () => {
+        // PUT replaces every grant, so build on the server's current list
+        // rather than possibly stale client state.
+        const current = await apiGet<AgentPermission[]>(`/agents/${agentID}/permissions`, token);
+        const plan = squadLLMGrantPlan(current, status.llm.provider_id);
+        // Grant the new provider before pointing the agent at it and drop the
+        // old one only afterwards, so a failed step never leaves the agent
+        // aimed at a provider it has no grant for.
+        if (plan.grant) {
+          await apiPut<AgentPermission[]>(`/agents/${agentID}/permissions`, token, plan.grant);
+        }
+        await apiPatch<Agent>(`/agents/${agentID}`, token, { default_provider_id: status.llm.provider_id, default_model: model });
+        if (plan.cleanup) {
+          await apiPut<AgentPermission[]>(`/agents/${agentID}/permissions`, token, plan.cleanup);
+        }
+        // A grant change reaches the gateway only when the agent's key is
+        // re-provisioned, which happens on identity rotation. Judge this from
+        // the freshly fetched grants, not the loaded permissions of whichever
+        // agent happens to be selected.
+        rotate = Boolean(agent.identity_id) && plan.grantsChanged;
+      },
+    );
   }
 
   async function createIdentity(agentID: string) {
@@ -598,32 +604,47 @@ export default function Home() {
     });
   }
 
-  async function deleteTask(taskID: string) {
-    if (!window.confirm("Delete this task?")) {
-      return;
-    }
-    await runAction("Task deleted", async () => {
-      await apiDelete(`/tasks/${taskID}`, token);
+  function confirmDelete(request: DeleteRequest) {
+    setPendingDelete(request);
+    deleteDialog.show();
+  }
+
+  function deleteTask(taskID: string) {
+    const task = (board.data?.tasks || []).find((item) => item.id === taskID);
+    confirmDelete({
+      title: "Delete task",
+      message: `Delete task "${task?.title || taskID}"? This cannot be undone.`,
+      confirmLabel: "Delete task",
+      success: "Task deleted",
+      action: async () => {
+        await apiDelete(`/tasks/${taskID}`, token);
+      },
     });
   }
 
-  async function deleteSquad(squadID: string) {
+  function deleteSquad(squadID: string) {
     const squad = (squads.data || []).find((item) => item.id === squadID);
-    if (!window.confirm(`Delete squad "${squad?.name || squadID}" including its agents, tasks, chat history and access grants? This cannot be undone.`)) {
-      return;
-    }
-    await runAction("Squad deleted", async () => {
-      await apiDelete(`/squads/${squadID}`, token);
+    confirmDelete({
+      title: "Delete squad",
+      message: `Delete squad "${squad?.name || squadID}" including its agents, tasks, chat history and access grants? This cannot be undone.`,
+      confirmLabel: "Delete squad",
+      success: "Squad deleted",
+      action: async () => {
+        await apiDelete(`/squads/${squadID}`, token);
+      },
     });
   }
 
-  async function deleteAgent(agentID: string) {
+  function deleteAgent(agentID: string) {
     const agent = (agents.data || []).find((item) => item.id === agentID);
-    if (!window.confirm(`Delete agent "${agent?.name || agentID}", unassign its tasks, and remove its chat history and credentials? This cannot be undone.`)) {
-      return;
-    }
-    await runAction("Agent deleted", async () => {
-      await apiDelete(`/agents/${agentID}`, token);
+    confirmDelete({
+      title: "Delete agent",
+      message: `Delete agent "${agent?.name || agentID}", unassign its tasks, and remove its chat history and credentials? This cannot be undone.`,
+      confirmLabel: "Delete agent",
+      success: "Agent deleted",
+      action: async () => {
+        await apiDelete(`/agents/${agentID}`, token);
+      },
     });
   }
 
@@ -740,11 +761,12 @@ export default function Home() {
     });
   }
 
-  async function runAction(success: string, action: () => Promise<void>) {
+  // success can be a function when the message depends on what the action found.
+  async function runAction(success: string | (() => string), action: () => Promise<void>) {
     setActionMessage("");
     try {
       await action();
-      refresh(success);
+      refresh(typeof success === "function" ? success() : success);
     } catch (error) {
       const state = errorState(error);
       setActionMessage(state.error || "Request failed");
@@ -763,6 +785,12 @@ export default function Home() {
       return errorState(error).error || "Request failed";
     }
   }
+
+  // Deletes confirm in the same dialog as the create forms. The request says
+  // what is being deleted and how, so one dialog serves squads, agents and
+  // tasks, and a failed delete keeps the dialog open with the error inside.
+  const [pendingDelete, setPendingDelete] = useState<DeleteRequest | null>(null);
+  const deleteDialog = useModalForm(async () => (pendingDelete ? runFormAction(pendingDelete.success, pendingDelete.action) : null));
 
   return (
     <main className="app-shell">
@@ -799,6 +827,15 @@ export default function Home() {
 
           <section className="content-band">
             {actionMessage && <div className={actionMessage.includes(":") ? "notice error compact" : "notice good compact"}>{actionMessage}</div>}
+
+            <Modal
+              {...deleteDialog.props}
+              title={pendingDelete?.title || "Delete"}
+              submitLabel={pendingDelete?.confirmLabel || "Delete"}
+              danger
+            >
+              <p className="modal-message">{pendingDelete?.message}</p>
+            </Modal>
 
             {activeSection === "inbox" && <InboxSection inbox={inbox} onMarkRead={markInboxRead} />}
 
@@ -948,6 +985,14 @@ function uniquePermissions(items: Array<{ resource_type: ResourceType; resource_
     return true;
   });
 }
+
+type DeleteRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  success: string;
+  action: () => Promise<void>;
+};
 
 // Saves the model the picker actually displays: when a stored model is no
 // longer served by its provider, the picker shows the provider's first model,
